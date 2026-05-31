@@ -23,5 +23,5 @@ ARCHIVE_CATEGORY_ID = int(os.getenv("ARCHIVE_CATEGORY_ID") or 0)
 MATCH_EMBED_CHANNEL_ID = int(os.getenv("MATCH_EMBED_CHANNEL_ID") or 0)
 # Keepalive and server configuration
 RENDER_URL = os.getenv("RENDER_URL", "")
-PORT = int(os.getenv("PORT", "8000"))
+PORT = int(os.getenv("PORT", "8080"))
 KEEPALIVE_INTERVAL = int(os.getenv("KEEPALIVE_INTERVAL", "300"))
