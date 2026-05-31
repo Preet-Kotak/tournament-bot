@@ -9,10 +9,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import discord
 from discord.ext import commands
 import logging
-from bot.config import DISCORD_TOKEN, PORT
+from bot.config import DISCORD_TOKEN, PORT, RENDER_URL, KEEPALIVE_INTERVAL
 from bot.db.connection import init_db, close_db
 from bot.db.models import setup_schema
-import os
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -72,7 +71,7 @@ def start_http_server_sync(port: int):
     print(f"[HTTP] Server started on port {port}")
 
 async def self_ping():
-    if not getattr(__import__('bot.config'), 'RENDER_URL', None):
+    if not RENDER_URL:
         print("[Keepalive] RENDER_URL not set — self-ping disabled.")
         return
     await asyncio.sleep(30)
@@ -80,18 +79,19 @@ async def self_ping():
         while True:
             try:
                 async with session.get(
-                    f"{getattr(__import__('bot.config'), 'RENDER_URL')}/health",
+                    f"{RENDER_URL}/health",
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     print(f"[Keepalive] Ping → {resp.status}")
             except Exception as exc:
                 print(f"[Keepalive] Ping failed: {exc}")
-            await asyncio.sleep(getattr(__import__('bot.config'), 'KEEPALIVE_INTERVAL', 300))
+            await asyncio.sleep(KEEPALIVE_INTERVAL)
 
 async def main():
+    bot = TournamentManagerBot()
     asyncio.create_task(self_ping())
     async with bot:
-        await bot.start(TOKEN)
+        await bot.start(DISCORD_TOKEN)
 
 if __name__ == "__main__":
     start_http_server_sync(PORT)
