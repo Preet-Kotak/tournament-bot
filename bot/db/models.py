@@ -35,7 +35,7 @@ async def setup_schema():
             team1_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
             team2_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
             channel_id BIGINT,
-            status TEXT CHECK (status IN ('scheduled', 'active', 'completed')) DEFAULT 'scheduled',
+            status TEXT CHECK (status IN ('pending', 'scheduled', 'active', 'completed')) DEFAULT 'pending',
             scheduled_time TIMESTAMP,
             embed_message_id BIGINT,
             match_number INTEGER DEFAULT 1
@@ -92,5 +92,16 @@ async def setup_schema():
                 await conn.execute(q)
             except Exception as e:
                 log.error(f"Error executing schema query: {e}")
-                
+
+        migrations = [
+            "ALTER TABLE matches DROP CONSTRAINT IF EXISTS matches_status_check",
+            "ALTER TABLE matches ADD CONSTRAINT matches_status_check CHECK (status IN ('pending', 'scheduled', 'active', 'completed'))",
+            "ALTER TABLE matches ALTER COLUMN status SET DEFAULT 'pending'",
+        ]
+        for m in migrations:
+            try:
+                await conn.execute(m)
+            except Exception as e:
+                log.error(f"Error running migration: {e}")
+
     log.info("Database schema setup complete.")

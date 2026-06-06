@@ -131,6 +131,7 @@ class Matches(commands.Cog):
                 FROM matches m
                 JOIN teams t1 ON m.team1_id = t1.id
                 JOIN teams t2 ON m.team2_id = t2.id
+                WHERE m.status IN ('pending', 'scheduled')
                 ORDER BY m.id DESC LIMIT 25
                 """
             )
@@ -171,7 +172,7 @@ class Matches(commands.Cog):
 
             match_id = await conn.fetchval(
                 """INSERT INTO matches (team1_id, team2_id, status, match_number)
-                VALUES ($1, $2, 'scheduled', $3) RETURNING id""",
+                VALUES ($1, $2, 'pending', $3) RETURNING id""",
                 t1['id'], t2['id'], match_number
             )
 
@@ -230,8 +231,8 @@ class Matches(commands.Cog):
                 await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
                 return
 
-            from datetime import datetime, timezone
-            dt = datetime.fromtimestamp(unix_timestamp, tz=timezone.utc)
+            from datetime import datetime
+            dt = datetime.utcfromtimestamp(unix_timestamp)
             await conn.execute(
                 "UPDATE matches SET scheduled_time = $1 WHERE id = $2",
                 dt, match_id
@@ -299,7 +300,7 @@ class Matches(commands.Cog):
 
         await interaction.followup.send(embed=success_embed("Match Started", f"Match #{match_id} is now active. Live embed posted in {embed_channel.mention}."))
 
-    @app_commands.command(name="matches", description="View all scheduled matches.")
+    @app_commands.command(name="matches", description="View all matches.")
     async def matches(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
@@ -320,7 +321,7 @@ class Matches(commands.Cog):
             await interaction.followup.send(embed=error_embed("No Matches", "No scheduled matches found."))
             return
 
-        embed = discord.Embed(title="Upcoming Matches", color=discord.Color.blue())
+        embed = discord.Embed(title="📅 Upcoming Matches", color=discord.Color.blue())
         for m in rows:
             time_str = f"<t:{int(m['scheduled_time'].timestamp())}:F>" if m['scheduled_time'] else "Time not set"
             embed.add_field(
