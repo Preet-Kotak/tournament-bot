@@ -1,4 +1,5 @@
 import discord
+from discord import channel
 from discord.ext import commands
 from discord import app_commands
 import logging
@@ -228,6 +229,11 @@ class Teams(commands.Cog):
                 # Fetch members to tag them
                 members = await conn.fetch("SELECT user_id FROM team_members WHERE team_id = $1", team['id'])
                 member_tags = " ".join([f"<@{m['user_id']}>" for m in members])
+
+                # Welcome message in team channel
+                await channel.send(
+                    f"{member_tags}\nThanks for participating in the tournament! You can use this as your team channel."
+                )
                 
                 # Post Announcement
                 if APPROVE_ANNOUNCE_CHANNEL_ID:
