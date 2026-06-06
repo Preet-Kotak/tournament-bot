@@ -203,11 +203,15 @@ class Teams(commands.Cog):
                 
                 overwrites = {
                     guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                    guild.me: discord.PermissionOverwrite(read_messages=True)
+                    guild.me: discord.PermissionOverwrite(read_messages=True
+                                                         ,send_messages=True
+                                                         ,read_message_history=True)
                 }
                 
                 if team_role:
-                    overwrites[team_role] = discord.PermissionOverwrite(read_messages=True)
+                    overwrites[team_role] = discord.PermissionOverwrite(read_messages=True
+                                                                       ,send_messages=True
+                                                                       ,read_message_history=True)
                     
                 channel = await guild.create_text_channel(
                     name=f"{team_name.lower().replace(' ', '-')}",
