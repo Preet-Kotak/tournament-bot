@@ -11,7 +11,7 @@ async def init_db():
         log.error("DATABASE_URL is not set in environment variables.")
         return
     try:
-        pool = await asyncpg.create_pool(DATABASE_URL)
+        pool = await asyncpg.create_pool(DATABASE_URL, statement_cache_size=0)
         log.info("Successfully connected to PostgreSQL (Supabase).")
     except Exception as e:
         log.error(f"Failed to connect to database: {e}")
