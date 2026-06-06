@@ -234,7 +234,26 @@ class Teams(commands.Cog):
                 await channel.send(
                     f"{member_tags}\nThanks for participating in the tournament! You can use this as your team channel."
                 )
-                
+                                # Account info — pinned message
+                account_embed = discord.Embed(
+                    title="📌 AI-3 Tournament — Account Information",
+                    description=(
+                        "For the accounts used for the AI-3 Tournament:\n\n"
+                        "You can use the accounts made for AI-2, but you will need to send a friend request to both host accounts below.\n\n"
+                        "**Host Accounts:**\n"
+                        "> [Ai3-ch9 host](link)\n"
+                        "> [Ai3-ch10 host](link)\n\n"
+                        "If you do not have an account, you have **2 options:**\n\n"
+                        "**Option 1** — Make your own account and use our email to log in. "
+                        "You will still need to send a friend request to both host accounts.\n\n"
+                        "**Option 2** — We can make an account for you."
+                    ),
+                    color=discord.Color.gold()
+                )
+                account_embed.set_footer(text="AI-3 tournament")
+                pinned_msg = await channel.send(embed=account_embed)
+                await pinned_msg.pin()
+
                 # Post Announcement
                 if APPROVE_ANNOUNCE_CHANNEL_ID:
                     announce_channel = guild.get_channel(APPROVE_ANNOUNCE_CHANNEL_ID)
