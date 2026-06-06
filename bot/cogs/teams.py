@@ -1,5 +1,4 @@
 import discord
-from discord import channel
 from discord.ext import commands
 from discord import app_commands
 import logging
@@ -127,7 +126,7 @@ class Teams(commands.Cog):
                             "New Team Registered",
                             f"**Team Name:** {name}\n**Leader:** {member1.mention}\n**Total Members:** {len(members)}\n**Members:** {member_tags}"
                         )
-                        await log_channel.send(embed=embed)
+                        await log_channel.send(embed=embed, view=ApproveTeamView(self, name))
 
                 await interaction.followup.send(embed=success_embed("Team Created", f"Team '{name}' has been created successfully. Wait for an admin to approve it."))
                 
@@ -195,10 +194,6 @@ class Teams(commands.Cog):
                 await interaction.followup.send(embed=error_embed("Already Approved", f"Team '{team_name}' is already approved."))
                 return
                 
-            if not team['logo_url']:
-                await interaction.followup.send(embed=error_embed("Missing Logo", f"Team '{team_name}' cannot be approved because they have not uploaded a logo."))
-                return
-
             guild = interaction.guild
             
             try:
@@ -234,7 +229,8 @@ class Teams(commands.Cog):
                 await channel.send(
                     f"{member_tags}\nThanks for participating in the tournament! You can use this as your team channel."
                 )
-                                # Account info — pinned message
+
+                # Account info — pinned message
                 account_embed = discord.Embed(
                     title="📌 AI-3 Tournament — Account Information",
                     description=(
@@ -254,24 +250,51 @@ class Teams(commands.Cog):
                 pinned_msg = await channel.send(embed=account_embed)
                 await pinned_msg.pin()
 
-                # Post Announcement
-                if APPROVE_ANNOUNCE_CHANNEL_ID:
-                    announce_channel = guild.get_channel(APPROVE_ANNOUNCE_CHANNEL_ID)
-                    if announce_channel:
-                        embed = discord.Embed(
-                            title="Team Approved!",
-                            description=f"Welcome **{team_name}** to the tournament!\n\n**Team Roster:**\n{member_tags}",
-                            color=discord.Color.gold()
-                        )
-                        embed.set_thumbnail(url=team['logo_url'])
-                        embed.set_footer(text="AI-3 tournament")
-                        await announce_channel.send(content=member_tags, embed=embed)
-
                 await interaction.followup.send(embed=success_embed("Team Approved", f"Team '{team_name}' approved and channel {channel.mention} created."))
                 
             except Exception as e:
                 log.error(f"Error approving team: {e}")
                 await interaction.followup.send(embed=error_embed("Error", "An unexpected error occurred while approving the team."))
+
+    @app_commands.command(name="announce-team", description="Announce an approved team in the announcements channel (Admin only).")
+    @is_admin()
+    async def announce_team(self, interaction: discord.Interaction, team_name: str):
+        await interaction.response.defer(ephemeral=True)
+
+        async with connection.pool.acquire() as conn:
+            team = await conn.fetchrow("SELECT * FROM teams WHERE name = $1", team_name)
+            if not team:
+                await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team_name}' does not exist."))
+                return
+            if not team['is_approved']:
+                await interaction.followup.send(embed=error_embed("Not Approved", f"Team '{team_name}' has not been approved yet."))
+                return
+            if not team['logo_url']:
+                await interaction.followup.send(embed=error_embed("No Logo", f"Team '{team_name}' does not have a logo. Upload one with `/add-logo` first."))
+                return
+
+            members = await conn.fetch("SELECT user_id FROM team_members WHERE team_id = $1", team['id'])
+            member_tags = " ".join([f"<@{m['user_id']}>" for m in members])
+
+        if not APPROVE_ANNOUNCE_CHANNEL_ID:
+            await interaction.followup.send(embed=error_embed("No Channel", "Announcement channel is not configured."))
+            return
+
+        announce_channel = interaction.guild.get_channel(APPROVE_ANNOUNCE_CHANNEL_ID)
+        if not announce_channel:
+            await interaction.followup.send(embed=error_embed("Not Found", "Could not find the announcement channel."))
+            return
+
+        embed = discord.Embed(
+            title="Welcome to the Tournament!",
+            description=f"Please welcome **{team_name}** to AI-3!",
+            color=discord.Color.gold()
+        )
+        embed.set_thumbnail(url=team['logo_url'])
+        embed.set_footer(text="AI-3 tournament")
+        await announce_channel.send(content=member_tags, embed=embed)
+
+        await interaction.followup.send(embed=success_embed("Announced", f"Team '{team_name}' has been announced."))
 
     @app_commands.command(name="delete-team", description="Delete a team and its roles completely (Admin only).")
     @is_admin()
@@ -296,7 +319,7 @@ class Teams(commands.Cog):
                     await team_role.delete(reason=f"Team {team_name} deleted")
                 except discord.HTTPException:
                     log.warning(f"Failed to delete role for team {team_name}")
-            
+
             # DB Deletion (Cascade handles team_members)
             await conn.execute("DELETE FROM teams WHERE id = $1", team['id'])
             

@@ -195,7 +195,7 @@ class Matches(commands.Cog):
                 if member:
                     overwrites[member] = discord.PermissionOverwrite(read_messages=True)
 
-            base_name = f"{team1.lower().replace(' ', '')}vs{team2.lower().replace(' ', '')}"
+            base_name = f"{team1.lower().replace(' ', '_')}_vs_{team2.lower().replace(' ', '_')}"
             channel_name = base_name if match_number == 1 else f"{base_name}-{match_number}"
 
             try:
@@ -219,29 +219,32 @@ class Matches(commands.Cog):
                 msg += f"\nChannel: {channel.mention}"
             await interaction.followup.send(embed=success_embed("Match Scheduled", msg))
 
-    @app_commands.command(name="fix-match", description="Set the scheduled time for a match (Admin only).")
+    @app_commands.command(name="schedule-match", description="Set the time and mark a match as scheduled (Admin only).")
     @app_commands.autocomplete(match_id=match_autocomplete)
     @is_admin()
-    async def fix_match(self, interaction: discord.Interaction, match_id: int, unix_timestamp: int):
+    async def schedule_match(self, interaction: discord.Interaction, match_id: int, unix_timestamp: int):
         await interaction.response.defer(ephemeral=True)
 
         async with connection.pool.acquire() as conn:
-            match = await conn.fetchrow("SELECT id FROM matches WHERE id = $1", match_id)
+            match = await conn.fetchrow("SELECT id, status FROM matches WHERE id = $1", match_id)
             if not match:
                 await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
+                return
+            if match['status'] not in ('pending', 'scheduled'):
+                await interaction.followup.send(embed=error_embed("Invalid", f"Match #{match_id} cannot be scheduled at this stage."))
                 return
 
             from datetime import datetime
             dt = datetime.utcfromtimestamp(unix_timestamp)
             await conn.execute(
-                "UPDATE matches SET scheduled_time = $1 WHERE id = $2",
+                "UPDATE matches SET scheduled_time = $1, status = 'scheduled' WHERE id = $2",
                 dt, match_id
             )
 
         await interaction.followup.send(
             embed=success_embed(
-                "Time Set",
-                f"Match #{match_id} scheduled for <t:{unix_timestamp}:F>"
+                "Match Scheduled",
+                f"Match #{match_id} is now scheduled for <t:{unix_timestamp}:F>"
             )
         )
 
@@ -312,18 +315,21 @@ class Matches(commands.Cog):
                 FROM matches m
                 JOIN teams t1 ON m.team1_id = t1.id
                 JOIN teams t2 ON m.team2_id = t2.id
-                WHERE m.status = 'scheduled'
+                WHERE m.status IN ('pending', 'scheduled')
                 ORDER BY m.id ASC
                 """
             )
 
         if not rows:
-            await interaction.followup.send(embed=error_embed("No Matches", "No scheduled matches found."))
+            await interaction.followup.send(embed=error_embed("No Matches", "No upcoming matches found."))
             return
 
         embed = discord.Embed(title="📅 Upcoming Matches", color=discord.Color.blue())
         for m in rows:
-            time_str = f"<t:{int(m['scheduled_time'].timestamp())}:F>" if m['scheduled_time'] else "Time not set"
+            if m['status'] == 'scheduled' and m['scheduled_time']:
+                time_str = f"🟡 Scheduled — <t:{int(m['scheduled_time'].timestamp())}:F>"
+            else:
+                time_str = "🕐 Not yet scheduled"
             embed.add_field(
                 name=f"Match #{m['id']}: {m['team1_name']} vs {m['team2_name']}",
                 value=time_str,
@@ -332,6 +338,31 @@ class Matches(commands.Cog):
         embed.set_footer(text="AI-3 tournament")
         await interaction.followup.send(embed=embed)
 
+
+    @app_commands.command(name="delete-match", description="Delete a match completely (Admin only).")
+    @app_commands.autocomplete(match_id=match_autocomplete)
+    @is_admin()
+    async def delete_match(self, interaction: discord.Interaction, match_id: int):
+        await interaction.response.defer(ephemeral=True)
+
+        async with connection.pool.acquire() as conn:
+            match = await conn.fetchrow(
+                """SELECT m.*, t1.name AS team1_name, t2.name AS team2_name
+                FROM matches m
+                JOIN teams t1 ON m.team1_id = t1.id
+                JOIN teams t2 ON m.team2_id = t2.id
+                WHERE m.id = $1""",
+                match_id
+            )
+            if not match:
+                await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
+                return
+
+            await conn.execute("DELETE FROM matches WHERE id = $1", match_id)
+
+        await interaction.followup.send(
+            embed=success_embed("Match Deleted", f"Match #{match_id} ({match['team1_name']} vs {match['team2_name']}) has been deleted.")
+        )
 
     @app_commands.command(name="clear-data", description="Wipe all data from the database (Admin only — testing use).")
     @is_admin()
