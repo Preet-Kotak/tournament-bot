@@ -231,7 +231,10 @@ class Teams(commands.Cog):
                                                           read_message_history=True,
                                                           add_reactions=True,
                                                           attach_files=True,
-                                                          use_application_commands=True)
+                                                          use_application_commands=True,
+                                                          embed_links=True,
+                                                          external_emojis=True,
+                                                          external_stickers=True)
                     
                 channel = await guild.create_text_channel(
                     name=f"{team_name.lower().replace(' ', '-')}",
@@ -332,12 +335,14 @@ class Teams(commands.Cog):
             if not team:
                 await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team_name}' does not exist."))
                 return
-                
 
-                
             guild = interaction.guild
             
-            # Remove roles
+            member_rows = await conn.fetch("SELECT user_id FROM team_members WHERE team_id = $1", team['id'])
+            member_ids = [row['user_id'] for row in member_rows]
+            participant_role = guild.get_role(PARTICIPANT_ROLE_ID)
+
+            # Remove team role
             team_role = guild.get_role(team['team_role_id'])
             if team_role:
                 try:
@@ -347,7 +352,22 @@ class Teams(commands.Cog):
 
             # DB Deletion (Cascade handles team_members)
             await conn.execute("DELETE FROM teams WHERE id = $1", team['id'])
-            
+
+            # Remove participant role from members who are no longer on any team
+            if participant_role:
+                for user_id in member_ids:
+                    still_on_team = await conn.fetchval(
+                        "SELECT EXISTS(SELECT 1 FROM team_members WHERE user_id = $1)",
+                        user_id
+                    )
+                    if not still_on_team:
+                        member = guild.get_member(user_id)
+                        if member and participant_role in member.roles:
+                            try:
+                                await member.remove_roles(participant_role)
+                            except discord.HTTPException:
+                                log.warning(f"Failed to remove participant role from {member.display_name}")
+
             await interaction.followup.send(embed=success_embed("Team Deleted", f"Team '{team_name}' has been deleted completely."))
 
     @app_commands.command(name="edit-team", description="Change a team's name or its entire roster (Admin only).")
