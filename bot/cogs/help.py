@@ -50,6 +50,17 @@ class Help(commands.Cog):
             )
 
             embed.add_field(
+                name="🏚️ Bases",
+                value=(
+                    "`/view-bases` — View any team's submitted bases for a match\n"
+                    "`/view-bases` — View your own team's submitted bases for a match(this is for players)\n"
+                    "`/send-bases` — Publicly post a team's base screenshots in channel\n"
+                    "`/submit-base` — Submit a district base for your team *(leader only)*\n"
+                ),
+                inline=False
+            )
+
+            embed.add_field(
                 name="🌐 Everyone",
                 value=(
                     "`/matches` — View all upcoming matches\n"
@@ -68,7 +79,15 @@ class Help(commands.Cog):
                 name="👥 Your Team",
                 value=(
                     "`/add-logo` — Upload a logo for your team *(leader & co-leader only)*\n"
-                    "`/view-bases` — View submitted bases for a match"
+                ),
+                inline=False
+            )
+
+            embed.add_field(
+                name="🏚️ Bases",
+                value=(
+                    "`/submit-base` — Submit a district base for your team *(leader only)*\n"
+                    "`/view-bases` — View your own team's submitted bases for a match"
                 ),
                 inline=False
             )

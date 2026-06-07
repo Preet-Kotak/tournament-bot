@@ -17,7 +17,7 @@ from bot.config import (
 log = logging.getLogger(__name__)
 
 
-async def build_match_embed(match_id: int) -> Optional[discord.Embed]:
+async def build_match_embed(match_id: int) -> Optional[str]:
     async with connection.pool.acquire() as conn:
         match = await conn.fetchrow("SELECT * FROM matches WHERE id = $1", match_id)
         if not match:
@@ -38,10 +38,10 @@ async def build_match_embed(match_id: int) -> Optional[discord.Embed]:
             match_id, match['team2_id']
         )}
 
-    t1_col = t1_name[:10]
-    t2_col = t2_name[:10]
-    sep = "─" * 42
-    header = f"{'District':<20} {t1_col:<11} {t2_col:<11}"
+    t1_col = t1_name[:12]
+    t2_col = t2_name[:12]
+    sep = "-" * 46
+    header = f"{'District':<20} {t1_col:<13} {t2_col:<13}"
     rows = [header, sep]
 
     total1 = 0
@@ -55,7 +55,7 @@ async def build_match_embed(match_id: int) -> Optional[discord.Embed]:
         if r1:
             s1 = r1['override_stars'] if r1['is_overridden'] else r1['current_stars']
             p1 = r1['override_percent'] if r1['is_overridden'] else r1['current_percent']
-            col1 = f"{s1}* {p1}%"
+            col1 = f"{s1}⭐ {p1}%"
             total1 += s1
         else:
             col1 = "--"
@@ -63,25 +63,18 @@ async def build_match_embed(match_id: int) -> Optional[discord.Embed]:
         if r2:
             s2 = r2['override_stars'] if r2['is_overridden'] else r2['current_stars']
             p2 = r2['override_percent'] if r2['is_overridden'] else r2['current_percent']
-            col2 = f"{s2}* {p2}%"
+            col2 = f"{s2}⭐ {p2}%"
             total2 += s2
         else:
             col2 = "--"
 
-        rows.append(f"{name:<20} {col1:<11} {col2:<11}")
+        rows.append(f"{name:<20} {col1:<13} {col2:<13}")
 
     rows.append(sep)
-    rows.append(f"{'Total':<20} {str(total1) + '*':<11} {str(total2) + '*':<11}")
+    rows.append(f"{'Total':<20} {str(total1) + '⭐':<13} {str(total2) + '⭐':<13}")
 
-    description = "```\n" + "\n".join(rows) + "\n```"
-
-    embed = discord.Embed(
-        title=f"{t1_name} vs {t2_name}",
-        description=description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"Match #{match_id} • AI-3 tournament")
-    return embed
+    content = "\n".join(rows)
+    return f"**{t1_name} vs {t2_name}**\n```\n{content}\n```\n*Match #{match_id} • AI-3 tournament*"
 
 
 async def refresh_match_embed(bot: discord.Client, match_id: int):
@@ -92,8 +85,8 @@ async def refresh_match_embed(bot: discord.Client, match_id: int):
     if not match or not match['embed_message_id']:
         return
 
-    embed = await build_match_embed(match_id)
-    if not embed:
+    message_content = await build_match_embed(match_id)
+    if not message_content:
         return
 
     embed_channel = bot.get_channel(MATCH_EMBED_CHANNEL_ID)
@@ -102,7 +95,7 @@ async def refresh_match_embed(bot: discord.Client, match_id: int):
 
     try:
         msg = await embed_channel.fetch_message(match['embed_message_id'])
-        await msg.edit(embed=embed)
+        await msg.edit(content=message_content, embed=None)
     except discord.NotFound:
         log.warning(f"Embed message not found for match {match_id}")
     except Exception as e:
@@ -274,9 +267,9 @@ class Matches(commands.Cog):
                         match_id, team_id, district
                     )
 
-        embed = await build_match_embed(match_id)
-        if not embed:
-            await interaction.followup.send(embed=error_embed("Error", "Could not build match embed."))
+        message_content = await build_match_embed(match_id)
+        if not message_content:
+            await interaction.followup.send(embed=error_embed("Error", "Could not build match scoreboard."))
             return
 
         embed_channel = self.bot.get_channel(MATCH_EMBED_CHANNEL_ID)
@@ -289,12 +282,12 @@ class Matches(commands.Cog):
             if existing:
                 try:
                     msg = await embed_channel.fetch_message(existing)
-                    await msg.edit(embed=embed)
+                    await msg.edit(content=message_content, embed=None)
                     embed_msg = msg
                 except discord.NotFound:
-                    embed_msg = await embed_channel.send(embed=embed)
+                    embed_msg = await embed_channel.send(content=message_content)
             else:
-                embed_msg = await embed_channel.send(embed=embed)
+                embed_msg = await embed_channel.send(content=message_content)
 
             await conn.execute(
                 "UPDATE matches SET embed_message_id = $1 WHERE id = $2",
@@ -369,7 +362,7 @@ class Matches(commands.Cog):
     async def clear_data(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         async with connection.pool.acquire() as conn:
-            await conn.execute("TRUNCATE attacks, district_scores, bases, team_members, matches, teams RESTART IDENTITY CASCADE")
+            await conn.execute("TRUNCATE attacks, district_scores, bases, matches RESTART IDENTITY CASCADE")
         await interaction.followup.send(embed=success_embed("Database Cleared", "All data has been wiped. Tables are empty and ready for testing."))
 
 
