@@ -604,6 +604,20 @@ class Teams(commands.Cog):
                 team['id']
             )
 
+            # Get scores for completed matches (while conn is still active)
+            completed_match_scores = {}
+            for match in completed_matches:
+                scores = await conn.fetch(
+                    """SELECT team_id, 
+                       SUM(CASE WHEN is_overridden THEN override_stars ELSE current_stars END) as total_stars,
+                       SUM(CASE WHEN is_overridden THEN override_percent ELSE current_percent END) as total_percent
+                    FROM district_scores 
+                    WHERE match_id = $1 AND team_id IN ($2, $3)
+                    GROUP BY team_id""",
+                    match['id'], match['team1_id'], match['team2_id']
+                )
+                completed_match_scores[match['id']] = {s['team_id']: (s['total_stars'], s['total_percent']) for s in scores}
+
         embed = discord.Embed(
             title=f"📋 {team['name']}",
             color=discord.Color.gold() if team['is_approved'] else discord.Color.greyple()
@@ -658,18 +672,8 @@ class Teams(commands.Cog):
         if completed_matches:
             match_lines = []
             for match in completed_matches:
-                # Get total stars and percent for both teams
-                scores = await conn.fetch(
-                    """SELECT team_id, 
-                       SUM(CASE WHEN is_overridden THEN override_stars ELSE current_stars END) as total_stars,
-                       SUM(CASE WHEN is_overridden THEN override_percent ELSE current_percent END) as total_percent
-                    FROM district_scores 
-                    WHERE match_id = $1 AND team_id IN ($2, $3)
-                    GROUP BY team_id""",
-                    match['id'], match['team1_id'], match['team2_id']
-                )
-                
-                score_dict = {s['team_id']: (s['total_stars'], s['total_percent']) for s in scores}
+                # Get scores from pre-fetched data
+                score_dict = completed_match_scores.get(match['id'], {})
                 team1_stars, team1_percent = score_dict.get(match['team1_id'], (0, 0))
                 team2_stars, team2_percent = score_dict.get(match['team2_id'], (0, 0))
                 
