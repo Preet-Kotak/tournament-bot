@@ -475,7 +475,7 @@ class Teams(commands.Cog):
 
             await interaction.followup.send(embed=success_embed("Team Edited", f"Team '{final_name}' has been successfully updated."))
 
-    @app_commands.command(name="set-sudo-leader", description="Give a team member sudo leader permissions (Admin only).")
+    @app_commands.command(name="set-coleader", description="Give a team member co-leader permissions (Admin only).")
     @is_admin()
     async def set_sudo_leader(self, interaction: discord.Interaction, team_name: str, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
