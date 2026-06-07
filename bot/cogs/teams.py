@@ -526,5 +526,172 @@ class Teams(commands.Cog):
             await conn.execute("UPDATE team_members SET role = 'sudo' WHERE team_id = $1 AND user_id = $2", team['id'], member.id)
             await interaction.followup.send(embed=success_embed("Sudo Leader Set", f"{member.mention} has been granted sudo leader permissions for '{team_name}'."))
 
+    @app_commands.command(name="teams-list", description="View all approved teams.")
+    async def teams_list(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=False)
+
+        async with connection.pool.acquire() as conn:
+            teams = await conn.fetch(
+                "SELECT id, name, created_at FROM teams WHERE is_approved = TRUE ORDER BY name ASC"
+            )
+
+        if not teams:
+            await interaction.followup.send(embed=error_embed("No Teams", "No approved teams found."))
+            return
+
+        embed = discord.Embed(
+            title="🏆 Approved Teams",
+            description=f"Total: **{len(teams)}** teams",
+            color=discord.Color.blue()
+        )
+        
+        team_list = []
+        for t in teams:
+            team_list.append(f"• **{t['name']}**")
+        
+        embed.add_field(name="Teams", value="\n".join(team_list), inline=False)
+        embed.set_footer(text="AI-3 tournament")
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="team-info", description="View detailed information about a team.")
+    async def team_info(self, interaction: discord.Interaction, team_name: str):
+        await interaction.response.defer(ephemeral=False)
+
+        async with connection.pool.acquire() as conn:
+            team = await conn.fetchrow(
+                "SELECT * FROM teams WHERE name = $1",
+                team_name
+            )
+            if not team:
+                await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team_name}' does not exist."))
+                return
+
+            members = await conn.fetch(
+                """SELECT tm.user_id, tm.role 
+                FROM team_members tm 
+                WHERE tm.team_id = $1 
+                ORDER BY 
+                    CASE tm.role 
+                        WHEN 'leader' THEN 1 
+                        WHEN 'sudo' THEN 2 
+                        ELSE 3 
+                    END, 
+                    tm.user_id""",
+                team['id']
+            )
+
+            # Get active/scheduled/pending matches
+            active_matches = await conn.fetch(
+                """SELECT m.id, m.team1_id, m.team2_id, t1.name AS t1, t2.name AS t2, m.status, m.scheduled_time
+                FROM matches m
+                JOIN teams t1 ON m.team1_id = t1.id
+                JOIN teams t2 ON m.team2_id = t2.id
+                WHERE (m.team1_id = $1 OR m.team2_id = $1) 
+                AND m.status IN ('pending', 'scheduled', 'active')
+                ORDER BY m.id DESC""",
+                team['id']
+            )
+
+            # Get completed matches
+            completed_matches = await conn.fetch(
+                """SELECT m.id, m.team1_id, m.team2_id, t1.name AS t1, t2.name AS t2
+                FROM matches m
+                JOIN teams t1 ON m.team1_id = t1.id
+                JOIN teams t2 ON m.team2_id = t2.id
+                WHERE (m.team1_id = $1 OR m.team2_id = $1) 
+                AND m.status = 'completed'
+                ORDER BY m.id DESC""",
+                team['id']
+            )
+
+        embed = discord.Embed(
+            title=f"📋 {team['name']}",
+            color=discord.Color.gold() if team['is_approved'] else discord.Color.greyple()
+        )
+
+        if team['logo_url']:
+            embed.set_thumbnail(url=team['logo_url'])
+
+        # Members section
+        member_lines = []
+        for m in members:
+            role_icon = "👑" if m['role'] == 'leader' else "⭐" if m['role'] == 'sudo' else "👤"
+            role_text = "(Leader)" if m['role'] == 'leader' else "(Co-Leader)" if m['role'] == 'sudo' else ""
+            member_lines.append(f"{role_icon} <@{m['user_id']}> {role_text}")
+
+        embed.add_field(
+            name=f"Members ({len(members)})",
+            value="\n".join(member_lines) if member_lines else "No members",
+            inline=False
+        )
+
+        # Status
+        status_text = "✅ Approved" if team['is_approved'] else "⏳ Pending Approval"
+        embed.add_field(name="Status", value=status_text, inline=True)
+
+        # Created date
+        if team['created_at']:
+            timestamp = int(team['created_at'].timestamp())
+            embed.add_field(name="Created", value=f"<t:{timestamp}:R>", inline=True)
+
+        # Upcoming matches (only if exists)
+        if active_matches:
+            match_lines = []
+            for match in active_matches:
+                status_emoji = "🟢" if match['status'] == 'active' else "🟡" if match['status'] == 'scheduled' else "⚪"
+                match_text = f"{status_emoji} Match #{match['id']}: {match['t1']} vs {match['t2']}"
+                
+                if match['status'] == 'scheduled' and match['scheduled_time']:
+                    timestamp = int(match['scheduled_time'].timestamp())
+                    match_text += f" • <t:{timestamp}:R>"
+                elif match['status'] == 'active':
+                    match_text += " • In Progress"
+                
+                match_lines.append(match_text)
+            embed.add_field(
+                name=f"Upcoming Matches ({len(active_matches)})",
+                value="\n".join(match_lines),
+                inline=False
+            )
+
+        # Completed matches (only if exists)
+        if completed_matches:
+            match_lines = []
+            for match in completed_matches:
+                # Get total stars and percent for both teams
+                scores = await conn.fetch(
+                    """SELECT team_id, 
+                       SUM(CASE WHEN is_overridden THEN override_stars ELSE current_stars END) as total_stars,
+                       SUM(CASE WHEN is_overridden THEN override_percent ELSE current_percent END) as total_percent
+                    FROM district_scores 
+                    WHERE match_id = $1 AND team_id IN ($2, $3)
+                    GROUP BY team_id""",
+                    match['id'], match['team1_id'], match['team2_id']
+                )
+                
+                score_dict = {s['team_id']: (s['total_stars'], s['total_percent']) for s in scores}
+                team1_stars, team1_percent = score_dict.get(match['team1_id'], (0, 0))
+                team2_stars, team2_percent = score_dict.get(match['team2_id'], (0, 0))
+                
+                # Determine winner
+                if team1_stars > team2_stars:
+                    winner = match['t1']
+                elif team2_stars > team1_stars:
+                    winner = match['t2']
+                else:
+                    winner = "Tie"
+                
+                match_text = f"🏁 Match #{match['id']}: {match['t1']} vs {match['t2']}\n   Score: {team1_stars}⭐ {team1_percent}% - {team2_stars}⭐ {team2_percent}% • Winner: **{winner}**"
+                match_lines.append(match_text)
+            
+            embed.add_field(
+                name=f"Completed Matches ({len(completed_matches)})",
+                value="\n".join(match_lines),
+                inline=False
+            )
+
+        embed.set_footer(text="AI-3 tournament")
+        await interaction.followup.send(embed=embed)
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(Teams(bot))

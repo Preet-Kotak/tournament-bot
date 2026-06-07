@@ -19,12 +19,13 @@ class Help(commands.Cog):
 
         if is_admin:
             embed = discord.Embed(
-                title="Command Reference — Admin",
+                title="🔧 Command Reference — Admin",
+                description="Full access to all tournament commands",
                 color=discord.Color.red()
             )
 
             embed.add_field(
-                name="Team Management",
+                name="👥 Team Management",
                 value=(
                     "`/create-team` — Register a new team with 3–5 members\n"
                     "`/approve-team` — Approve a team and create their private channel\n"
@@ -32,7 +33,8 @@ class Help(commands.Cog):
                     "`/edit-team` — Change a team's name or full roster\n"
                     "`/delete-team` — Delete a team and remove their role\n"
                     "`/set-coleader` — Give a team member co-leader permissions\n"
-                    "`/add-logo` — Upload a logo for a team *(leader can also use)*"
+                    "`/teams-list` — View all approved teams\n"
+                    "`/team-info` — View detailed information about a team"
                 ),
                 inline=False
             )
@@ -41,82 +43,106 @@ class Help(commands.Cog):
                 name="📅 Match Management",
                 value=(
                     "`/set-match` — Create a new match between two teams\n"
-                    "`/schedule-match` — Set the match time and mark it as scheduled\n"
+                    "`/schedule-match` — Set the match time and mark as scheduled\n"
                     "`/start-match` — Start a match and post the live embed\n"
-                    "`/end-match` — End an active match\n"
+                    "`/end-match` — End a match and move to archive\n"
                     "`/delete-match` — Delete a match completely\n"
+                    "`/matches` — View all upcoming matches"
                 ),
                 inline=False
             )
 
             embed.add_field(
-                name="🏚️ Bases",
+                name="🗺️ Base Management",
                 value=(
-                    "`/view-bases` — View any team's submitted bases for a match\n"
-                    "`/view-bases` — View your own team's submitted bases for a match(this is for players)\n"
-                    "`/send-bases` — Publicly post a team's base screenshots in channel\n"
-                    "`/submit-base` — Submit a district base for your team *(leader only)*\n"
+                    "`/view-bases` — View any team's submitted bases (specify team)\n"
+                    "`/send-bases` — Publicly post a team's base screenshots\n"
+                    "`/base-status` — Check base submission status for a match\n"
+                    "`/remind-bases` — Ping a team about missing bases"
                 ),
                 inline=False
             )
 
             embed.add_field(
-                name="🌐 Everyone",
+                name="🌐 Utility",
                 value=(
-                    "`/matches` — View all upcoming matches\n"
-                    "`/help` — Show this message"
+                    "`/help` — Show this command reference\n"
+                    "`/clear-data` — Wipe all match data (testing only)"
                 ),
                 inline=False
             )
 
         elif is_participant:
             embed = discord.Embed(
-                title="Command Reference — Participant",
+                title="⚔️ Command Reference — Participant",
+                description="Commands available to tournament participants",
                 color=discord.Color.green()
             )
 
             embed.add_field(
-                name="👥 Your Team",
+                name="👥 Team Commands (Leader/Co-Leader Only)",
                 value=(
-                    "`/add-logo` — Upload a logo for your team *(leader & co-leader only)*\n"
+                    "`/add-logo` — Upload a logo for your team\n"
+                    "`/submit-base` — Submit a district base for your team"
                 ),
                 inline=False
             )
 
             embed.add_field(
-                name="🏚️ Bases",
+                name="🗺️ Base Commands (All Team Members)",
                 value=(
-                    "`/submit-base` — Submit a district base for your team *(leader only)*\n"
-                    "`/view-bases` — View your own team's submitted bases for a match"
+                    "`/view-bases` — View your team's submitted bases\n"
+                    "`/base-status` — Check which bases your team has submitted"
                 ),
                 inline=False
             )
 
             embed.add_field(
-                name="🌐 Everyone",
+                name="🌐 General Commands (Everyone)",
                 value=(
+                    "`/create-team` — Register a new team (if not on one)\n"
+                    "`/teams-list` — View all approved teams\n"
+                    "`/team-info` — View detailed information about a team\n"
                     "`/matches` — View all upcoming matches\n"
-                    "`/help` — Show this message"
+                    "`/help` — Show this command reference"
                 ),
                 inline=False
             )
 
         else:
             embed = discord.Embed(
-                title="Command Reference",
+                title="� Command Reference",
+                description="Commands available to everyone",
                 color=discord.Color.blurple()
             )
 
             embed.add_field(
-                name="🌐 Available Commands",
+                name="� Team Commands",
                 value=(
-                    "`/matches` — View all upcoming matches\n"
-                    "`/help` — Show this message"
+                    "`/create-team` — Register a new team with 3–5 members\n"
+                    "`/teams-list` — View all approved teams\n"
+                    "`/team-info` — View detailed information about a team"
                 ),
                 inline=False
             )
 
-        embed.set_footer(text="AI-3 tournament • Anshu's Invitational 3")
+            embed.add_field(
+                name="📅 Match Commands",
+                value=(
+                    "`/matches` — View all upcoming matches"
+                ),
+                inline=False
+            )
+
+            embed.add_field(
+                name="🌐 Utility",
+                value=(
+                    "`/help` — Show this command reference"
+                ),
+                inline=False
+            )
+
+        embed.set_footer(text="AI-3 Tournament • Anshu's Invitational 3")
         await interaction.followup.send(embed=embed)
 
 

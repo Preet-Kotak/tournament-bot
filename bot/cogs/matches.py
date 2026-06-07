@@ -12,6 +12,7 @@ from bot.config import (
     ADMIN_IDS,
     MATCH_CATEGORY_ID,
     MATCH_EMBED_CHANNEL_ID,
+    ARCHIVE_CATEGORY_ID,
 )
 
 log = logging.getLogger(__name__)
@@ -331,6 +332,65 @@ class Matches(commands.Cog):
         embed.set_footer(text="AI-3 tournament")
         await interaction.followup.send(embed=embed)
 
+
+    @app_commands.command(name="end-match", description="End a match and move it to archive (Admin only).")
+    @app_commands.autocomplete(match_id=match_autocomplete)
+    @is_admin()
+    async def end_match(self, interaction: discord.Interaction, match_id: int):
+        await interaction.response.defer(ephemeral=True)
+
+        async with connection.pool.acquire() as conn:
+            match = await conn.fetchrow("SELECT * FROM matches WHERE id = $1", match_id)
+            if not match:
+                await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
+                return
+
+            if match['status'] == 'completed':
+                await interaction.followup.send(embed=error_embed("Already Completed", f"Match #{match_id} is already completed."))
+                return
+
+            team1 = await conn.fetchrow("SELECT name FROM teams WHERE id = $1", match['team1_id'])
+            team2 = await conn.fetchrow("SELECT name FROM teams WHERE id = $1", match['team2_id'])
+            t1_name = team1['name'] if team1 else "Team 1"
+            t2_name = team2['name'] if team2 else "Team 2"
+
+            await conn.execute("UPDATE matches SET status = 'completed' WHERE id = $1", match_id)
+
+        guild = interaction.guild
+
+        # Move channel to archive
+        if match['channel_id']:
+            channel = guild.get_channel(match['channel_id'])
+            if channel and ARCHIVE_CATEGORY_ID:
+                archive_category = guild.get_channel(ARCHIVE_CATEGORY_ID)
+                if archive_category:
+                    try:
+                        await channel.edit(category=archive_category)
+                    except discord.HTTPException as e:
+                        log.error(f"Failed to move channel to archive: {e}")
+
+        # Update the live embed footer to show match completed
+        if match['embed_message_id']:
+            embed_channel = self.bot.get_channel(MATCH_EMBED_CHANNEL_ID)
+            if embed_channel:
+                try:
+                    msg = await embed_channel.fetch_message(match['embed_message_id'])
+                    current_content = msg.content
+                    # Update footer by replacing the footer text
+                    if "*Match #" in current_content:
+                        updated_content = current_content.replace(
+                            f"*Match #{match_id} • AI-3 tournament*",
+                            f"*Match #{match_id} • Match Ended • AI-3 tournament*"
+                        )
+                        await msg.edit(content=updated_content, embed=None)
+                except discord.NotFound:
+                    log.warning(f"Embed message not found for match {match_id}")
+                except Exception as e:
+                    log.error(f"Failed to update match embed: {e}")
+
+        await interaction.followup.send(
+            embed=success_embed("Match Ended", f"Match #{match_id} ({t1_name} vs {t2_name}) has been marked as completed and archived.")
+        )
 
     @app_commands.command(name="delete-match", description="Delete a match completely (Admin only).")
     @app_commands.autocomplete(match_id=match_autocomplete)

@@ -178,6 +178,10 @@ class Bases(commands.Cog):
             await self.save_base(interaction, match_id, team_id, district, link, screenshot.url)
 
     @app_commands.command(name="view-bases", description="View submitted bases for a match (only you can see this).")
+    @app_commands.describe(
+        match_id="The match ID to view bases for",
+        team="(Admin only) The team name to view bases for"
+    )
     @app_commands.autocomplete(match_id=match_autocomplete, team=team_autocomplete)
     @is_team_member_or_admin()
     async def view_bases(self, interaction: discord.Interaction, match_id: int, team: Optional[str] = None):
@@ -238,11 +242,11 @@ class Bases(commands.Cog):
             
         return
 
-    @app_commands.command(name="send-bases", description="Publicly post a team's base screenshots for a match (Admin only).")
-    @app_commands.autocomplete(match_id=match_autocomplete, team=team_autocomplete)
-    @is_admin()
-    async def send_bases(self, interaction: discord.Interaction, match_id: int, team: str):
-        await interaction.response.defer()
+    @app_commands.command(name="base-status", description="Check which bases your team has submitted for a match.")
+    @app_commands.autocomplete(match_id=match_autocomplete)
+    @is_team_member_or_admin()
+    async def base_status(self, interaction: discord.Interaction, match_id: int):
+        await interaction.response.defer(ephemeral=True)
 
         async with connection.pool.acquire() as conn:
             match = await conn.fetchrow("SELECT * FROM matches WHERE id = $1", match_id)
@@ -250,7 +254,51 @@ class Bases(commands.Cog):
                 await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
                 return
 
-            team_record = await conn.fetchrow("SELECT id, name FROM teams WHERE name = $1", team)
+            team_record = await conn.fetchrow(
+                """SELECT t.id, t.name FROM teams t
+                JOIN team_members tm ON t.id = tm.team_id
+                WHERE tm.user_id = $1 AND t.id IN ($2, $3)""",
+                interaction.user.id, match['team1_id'], match['team2_id']
+            )
+            if not team_record:
+                await interaction.followup.send(embed=error_embed("Not Eligible", "You are not a member of either team in this match."))
+                return
+
+            submitted = await conn.fetch(
+                "SELECT district FROM bases WHERE team_id = $1 AND match_id = $2 ORDER BY district",
+                team_record['id'], match_id
+            )
+
+        submitted_districts = {row['district'] for row in submitted}
+
+        status_lines = []
+        for d in range(9):
+            icon = "✅" if d in submitted_districts else "❌"
+            status_lines.append(f"{icon} {DISTRICT_NAMES[d]}")
+
+        count = len(submitted_districts)
+
+        embed = discord.Embed(
+            title=f"Base Submission Status — {team_record['name']}",
+            description=f"**Match #{match_id}**\n\n" + "\n".join(status_lines) + f"\n\n**{count}/9 Districts Submitted**",
+            color=discord.Color.green() if count == 9 else discord.Color.orange()
+        )
+        embed.set_footer(text="AI-3 tournament")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="remind-bases", description="Ping a team about missing base submissions (Admin only).")
+    @app_commands.autocomplete(match_id=match_autocomplete, team=team_autocomplete)
+    @is_admin()
+    async def remind_bases(self, interaction: discord.Interaction, match_id: int, team: str):
+        await interaction.response.defer(ephemeral=False)
+
+        async with connection.pool.acquire() as conn:
+            match = await conn.fetchrow("SELECT * FROM matches WHERE id = $1", match_id)
+            if not match:
+                await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
+                return
+
+            team_record = await conn.fetchrow("SELECT id, name, team_role_id FROM teams WHERE name = $1", team)
             if not team_record:
                 await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team}' not found."))
                 return
@@ -259,32 +307,39 @@ class Bases(commands.Cog):
                 await interaction.followup.send(embed=error_embed("Not Eligible", f"Team **{team}** is not part of Match #{match_id}."))
                 return
 
-            bases = await conn.fetch(
-                "SELECT district, screenshot_url FROM bases WHERE team_id = $1 AND match_id = $2 ORDER BY district",
+            submitted = await conn.fetch(
+                "SELECT district FROM bases WHERE team_id = $1 AND match_id = $2",
                 team_record['id'], match_id
             )
 
-        if not bases:
-            await interaction.followup.send(embed=error_embed("No Bases", f"No bases submitted for **{team_record['name']}** in Match #{match_id}."))
+        submitted_districts = {row['district'] for row in submitted}
+        missing = [d for d in range(9) if d not in submitted_districts]
+
+        if not missing:
+            await interaction.followup.send(embed=success_embed("All Submitted", f"Team **{team}** has already submitted all 9 bases."))
             return
 
-        summary_embed = discord.Embed(
-            title=f"🗺️ {team_record['name']} — Base Screenshots (Match #{match_id})",
-            description="Here are the submitted base screenshots:",
-            color=discord.Color.orange()
-        )
-        summary_embed.set_footer(text="AI-3 tournament")
-        await interaction.followup.send(embed=summary_embed)
+        missing_lines = [f"❌ {DISTRICT_NAMES[d]}" for d in missing]
 
-        for b in bases:
-            embed = discord.Embed(
-                title=DISTRICT_NAMES[b['district']],
-                description=f"[View Base]({b['screenshot_url']})",
-                color=discord.Color.blue()
-            )
-            embed.set_image(url=b['screenshot_url'])
-            embed.set_footer(text="AI-3 tournament")
-            await interaction.followup.send(embed=embed)
+        guild = interaction.guild
+        team_role = guild.get_role(team_record['team_role_id'])
+        ping = team_role.mention if team_role else team_record['name']
+
+        team_channel = guild.get_channel(team_record['channel_id']) if team_record['channel_id'] else None
+
+        if not team_channel:
+            await interaction.followup.send(embed=error_embed("No Channel", f"Team **{team}** does not have a team channel."))
+            return
+
+        embed = discord.Embed(
+            title="⚠️ Base Submission Reminder",
+            description=f"**Match #{match_id}**\n\nMissing bases for:\n" + "\n".join(missing_lines) + "\n\n**Please submit these bases ASAP!**",
+            color=discord.Color.red()
+        )
+        embed.set_footer(text="AI-3 tournament")
+
+        await team_channel.send(content=ping, embed=embed)
+        await interaction.followup.send(embed=success_embed("Reminder Sent", f"Reminder sent to {ping} in {team_channel.mention}."), ephemeral=False)
 
 
 async def setup(bot: commands.Bot):
