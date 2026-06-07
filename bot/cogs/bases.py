@@ -96,7 +96,8 @@ class Bases(commands.Cog):
         district_name = DISTRICT_NAMES[district]
         action = "replaced" if replace else "submitted"
         await interaction.followup.send(
-            embed=success_embed("Base Submitted", f"Base for **{district_name}** has been {action} successfully.")
+            embed=success_embed("Base Submitted", f"Base for **{district_name}** has been {action} successfully."),
+            ephemeral=True
         )
 
         if submitted_count == 9 and ADMIN_LOG_CHANNEL_ID:
@@ -120,24 +121,25 @@ class Bases(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         if not screenshot.content_type or not screenshot.content_type.startswith("image/"):
-            await interaction.followup.send(embed=error_embed("Invalid File", "Screenshot must be an image file."))
+            await interaction.followup.send(embed=error_embed("Invalid File", "Screenshot must be an image file."), ephemeral=True)
             return
-
+        link = link.strip().strip("<>")
         district = get_district_from_link(link)
         if district is None:
             await interaction.followup.send(
-                embed=error_embed("Invalid Link", "Could not detect a district from that link. Please check the link and submit again.")
+                    embed=error_embed("Invalid Link", "Could not detect a district from that link. Please check the link and submit again."),
+                    ephemeral=True
             )
             return
 
         async with connection.pool.acquire() as conn:
             match = await conn.fetchrow("SELECT * FROM matches WHERE id = $1", match_id)
             if not match:
-                await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
+                await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."), ephemeral=True)
                 return
 
             if match['status'] not in ('pending', 'scheduled'):
-                await interaction.followup.send(embed=error_embed("Not Allowed", "Bases can only be submitted for matches that are pending or scheduled."))
+                await interaction.followup.send(embed=error_embed("Not Allowed", "Bases can only be submitted for matches that are pending or scheduled."), ephemeral=True)
                 return
 
             team_record = await conn.fetchrow(
@@ -149,7 +151,8 @@ class Bases(commands.Cog):
             )
             if not team_record:
                 await interaction.followup.send(
-                    embed=error_embed("Not Eligible", "You are not a leader of any team in this match.")
+                    embed=error_embed("Not Eligible", "You are not a leader of any team in this match."),
+                    ephemeral=True
                 )
                 return
             team_id = team_record['id']
@@ -168,7 +171,8 @@ class Bases(commands.Cog):
                     "Base Already Submitted",
                     f"A base for **{district_name}** is already submitted. Do you want to replace it?"
                 ),
-                view=view
+                view=view,
+                ephemeral=True
             )
         else:
             await self.save_base(interaction, match_id, team_id, district, link, screenshot.url)
@@ -188,7 +192,7 @@ class Bases(commands.Cog):
                 return
 
             if is_admin_user:
-                # Admins can specify any team, or default to team1 if none given
+                # Admins can specify any team, 
                 if team:
                     team_record = await conn.fetchrow("SELECT id, name FROM teams WHERE name = $1", team)
                     if not team_record:
@@ -197,7 +201,8 @@ class Bases(commands.Cog):
                 else:
                     # No team specified — prompt admin to provide one
                     await interaction.followup.send(
-                        embed=error_embed("Team Required", "Please specify a team name to view bases as an admin.")
+                        embed=error_embed("Team Required", "Please specify a team name to view bases as an admin."),
+                        ephemeral=True
                     )
                     return
             else:
@@ -209,7 +214,7 @@ class Bases(commands.Cog):
                     interaction.user.id, match['team1_id'], match['team2_id']
                 )
                 if not team_record:
-                    await interaction.followup.send(embed=error_embed("Not Eligible", "You are not a member of any team in this match."))
+                    await interaction.followup.send(embed=error_embed("Not Eligible", "HEHE! You cannot cheat"))
                     return
 
             bases = await conn.fetch(
@@ -218,19 +223,20 @@ class Bases(commands.Cog):
             )
 
         if not bases:
-            await interaction.followup.send(embed=error_embed("No Bases", f"No bases submitted for **{team_record['name']}** in Match #{match_id}."))
+            await interaction.followup.send(embed=error_embed("No Bases", f"No bases submitted for **{team_record['name']}** in Match #{match_id}."), ephemeral=True)
             return
 
-        embed = discord.Embed(
-            title=f"📋 {team_record['name']} — Bases (Match #{match_id})",
-            color=discord.Color.gold() if is_admin_user else discord.Color.blue()
-        )
         for b in bases:
-            value = f"[Base Link](<{b['link']}>) • [Screenshot]({b['screenshot_url']})"
-            embed.add_field(name=DISTRICT_NAMES[b['district']], value=value, inline=False)
-
-        embed.set_footer(text="AI-3 tournament")
-        await interaction.followup.send(embed=embed)
+            embed = discord.Embed(
+                title=f"{team_record['name']} — {DISTRICT_NAMES[b['district']]}",
+                description=f"[Base Link](<{b['link']}>)",
+                color=discord.Color.gold() if is_admin_user else discord.Color.blue()
+            )
+            embed.set_image(url=b['screenshot_url'])
+            embed.set_footer(text="AI-3 tournament")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        return
 
     @app_commands.command(name="send-bases", description="Publicly post a team's base screenshots for a match (Admin only).")
     @app_commands.autocomplete(match_id=match_autocomplete, team=team_autocomplete)
@@ -262,19 +268,23 @@ class Bases(commands.Cog):
             await interaction.followup.send(embed=error_embed("No Bases", f"No bases submitted for **{team_record['name']}** in Match #{match_id}."))
             return
 
-        embed = discord.Embed(
+        summary_embed = discord.Embed(
             title=f"🗺️ {team_record['name']} — Base Screenshots (Match #{match_id})",
+            description="Here are the submitted base screenshots:",
             color=discord.Color.orange()
         )
-        for b in bases:
-            embed.add_field(
-                name=DISTRICT_NAMES[b['district']],
-                value=f"[View Screenshot]({b['screenshot_url']})",
-                inline=False
-            )
+        summary_embed.set_footer(text="AI-3 tournament")
+        await interaction.followup.send(embed=summary_embed)
 
-        embed.set_footer(text="AI-3 tournament")
-        await interaction.followup.send(embed=embed)
+        for b in bases:
+            embed = discord.Embed(
+                title=DISTRICT_NAMES[b['district']],
+                description=f"[View Base]({b['screenshot_url']})",
+                color=discord.Color.blue()
+            )
+            embed.set_image(url=b['screenshot_url'])
+            embed.set_footer(text="AI-3 tournament")
+            await interaction.followup.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):
