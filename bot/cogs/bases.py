@@ -286,6 +286,54 @@ class Bases(commands.Cog):
         embed.set_footer(text="AI-3 tournament")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    @app_commands.command(name="send-bases", description="Publicly post a team's base screenshots for a match (Admin only).")
+    @app_commands.autocomplete(match_id=match_autocomplete, team=team_autocomplete)
+    @is_admin()
+    async def send_bases(self, interaction: discord.Interaction, match_id: int, team: str):
+        await interaction.response.defer()
+
+        async with connection.pool.acquire() as conn:
+            match = await conn.fetchrow("SELECT * FROM matches WHERE id = $1", match_id)
+            if not match:
+                await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
+                return
+
+            team_record = await conn.fetchrow("SELECT id, name FROM teams WHERE name = $1", team)
+            if not team_record:
+                await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team}' not found."))
+                return
+
+            if team_record['id'] not in (match['team1_id'], match['team2_id']):
+                await interaction.followup.send(embed=error_embed("Not Eligible", f"Team **{team}** is not part of Match #{match_id}."))
+                return
+
+            bases = await conn.fetch(
+                "SELECT district, screenshot_url FROM bases WHERE team_id = $1 AND match_id = $2 ORDER BY district",
+                team_record['id'], match_id
+            )
+
+        if not bases:
+            await interaction.followup.send(embed=error_embed("No Bases", f"No bases submitted for **{team_record['name']}** in Match #{match_id}."))
+            return
+
+        summary_embed = discord.Embed(
+            title=f"🗺️ {team_record['name']} — Base Screenshots (Match #{match_id})",
+            description="Here are the submitted base screenshots:",
+            color=discord.Color.orange()
+        )
+        summary_embed.set_footer(text="AI-3 tournament")
+        await interaction.followup.send(embed=summary_embed)
+
+        for b in bases:
+            embed = discord.Embed(
+                title=DISTRICT_NAMES[b['district']],
+                description=f"[View Base]({b['screenshot_url']})",
+                color=discord.Color.blue()
+            )
+            embed.set_image(url=b['screenshot_url'])
+            embed.set_footer(text="AI-3 tournament")
+            await interaction.followup.send(embed=embed)
+
     @app_commands.command(name="remind-bases", description="Ping a team about missing base submissions (Admin only).")
     @app_commands.autocomplete(match_id=match_autocomplete, team=team_autocomplete)
     @is_admin()

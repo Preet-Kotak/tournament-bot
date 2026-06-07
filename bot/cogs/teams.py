@@ -553,7 +553,16 @@ class Teams(commands.Cog):
         embed.set_footer(text="AI-3 tournament")
         await interaction.followup.send(embed=embed)
 
+    async def team_autocomplete(self, interaction: discord.Interaction, current: str):
+        async with connection.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT name FROM teams WHERE is_approved = TRUE AND LOWER(name) LIKE $1 LIMIT 25",
+                f"%{current.lower()}%"
+            )
+        return [app_commands.Choice(name=r['name'], value=r['name']) for r in rows]
+
     @app_commands.command(name="team-info", description="View detailed information about a team.")
+    @app_commands.autocomplete(team_name=team_autocomplete)
     async def team_info(self, interaction: discord.Interaction, team_name: str):
         await interaction.response.defer(ephemeral=False)
 
