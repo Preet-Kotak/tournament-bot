@@ -11,7 +11,7 @@ class Help(commands.Cog):
 
     @app_commands.command(name="help", description="Show all available commands.")
     async def help(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
         user = interaction.user
         is_admin = user.id in ADMIN_IDS
