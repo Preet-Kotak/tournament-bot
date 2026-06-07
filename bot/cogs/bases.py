@@ -298,7 +298,7 @@ class Bases(commands.Cog):
                 await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
                 return
 
-            team_record = await conn.fetchrow("SELECT id, name, team_role_id FROM teams WHERE name = $1", team)
+            team_record = await conn.fetchrow("SELECT id, name, team_role_id, channel_id FROM teams WHERE name = $1", team)
             if not team_record:
                 await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team}' not found."))
                 return

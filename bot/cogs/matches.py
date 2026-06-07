@@ -136,6 +136,25 @@ class Matches(commands.Cog):
                 choices.append(app_commands.Choice(name=label[:100], value=r['id']))
         return choices
 
+    async def active_match_autocomplete(self, interaction: discord.Interaction, current: str):
+        async with connection.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT m.id, t1.name AS t1, t2.name AS t2, m.status
+                FROM matches m
+                JOIN teams t1 ON m.team1_id = t1.id
+                JOIN teams t2 ON m.team2_id = t2.id
+                WHERE m.status = 'active'
+                ORDER BY m.id DESC LIMIT 25
+                """
+            )
+        choices = []
+        for r in rows:
+            label = f"#{r['id']}: {r['t1']} vs {r['t2']} ({r['status']})"
+            if current.lower() in label.lower():
+                choices.append(app_commands.Choice(name=label[:100], value=r['id']))
+        return choices
+
     @app_commands.command(name="set-match", description="Schedule a match between two teams (Admin only).")
     @app_commands.autocomplete(team1=team_autocomplete, team2=team_autocomplete)
     @is_admin()
@@ -334,7 +353,7 @@ class Matches(commands.Cog):
 
 
     @app_commands.command(name="end-match", description="End a match and move it to archive (Admin only).")
-    @app_commands.autocomplete(match_id=match_autocomplete)
+    @app_commands.autocomplete(match_id=active_match_autocomplete)
     @is_admin()
     async def end_match(self, interaction: discord.Interaction, match_id: int):
         await interaction.response.defer(ephemeral=True)
