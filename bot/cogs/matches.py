@@ -223,7 +223,7 @@ class Matches(commands.Cog):
     @app_commands.autocomplete(match_id=match_autocomplete)
     @is_admin()
     async def schedule_match(self, interaction: discord.Interaction, match_id: int, unix_timestamp: int):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
         async with connection.pool.acquire() as conn:
             match = await conn.fetchrow("SELECT id, status FROM matches WHERE id = $1", match_id)
@@ -305,7 +305,7 @@ class Matches(commands.Cog):
 
     @app_commands.command(name="matches", description="View all matches.")
     async def matches(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
         async with connection.pool.acquire() as conn:
             rows = await conn.fetch(

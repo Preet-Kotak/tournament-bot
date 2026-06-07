@@ -16,6 +16,26 @@ from bot.config import (
 
 log = logging.getLogger(__name__)
 
+class AnnounceTeamView(discord.ui.View):
+    def __init__(self, cog: 'Teams', team_name: str):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.team_name = team_name
+
+    @discord.ui.button(label="Announce Team", style=discord.ButtonStyle.primary, custom_id="dynamic_announce_btn")
+    async def announce_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from bot.config import ADMIN_IDS
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("Only admins can use this button.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        button.disabled = True
+        await interaction.message.edit(view=self)
+
+        await self.cog.process_team_announcement(interaction, self.team_name)
+
+
 class ApproveTeamView(discord.ui.View):
     def __init__(self, cog: 'Teams', team_name: str):
         super().__init__(timeout=None)
@@ -170,7 +190,7 @@ class Teams(commands.Cog):
                 if log_channel:
                     embed = admin_log_embed("Team Logo Uploaded", f"Team: **{team_name}**")
                     embed.set_image(url=logo.url)
-                    view = ApproveTeamView(self, team_name)
+                    view = AnnounceTeamView(self, team_name)
                     await log_channel.send(embed=embed, view=view)
 
             await interaction.followup.send(embed=success_embed("Logo Added", "Your team logo has been updated successfully."))
@@ -264,7 +284,9 @@ class Teams(commands.Cog):
     @is_admin()
     async def announce_team(self, interaction: discord.Interaction, team_name: str):
         await interaction.response.defer(ephemeral=True)
+        await self.process_team_announcement(interaction, team_name)
 
+    async def process_team_announcement(self, interaction: discord.Interaction, team_name: str):
         async with connection.pool.acquire() as conn:
             team = await conn.fetchrow("SELECT * FROM teams WHERE name = $1", team_name)
             if not team:
@@ -290,11 +312,10 @@ class Teams(commands.Cog):
             return
 
         embed = discord.Embed(
-            title="Welcome to the Tournament!",
-            description=f"Please welcome **{team_name}** to AI-3!",
+            title=f"Welcome {team_name} to Anshu's Invitational 3!",
             color=discord.Color.gold()
         )
-        embed.set_thumbnail(url=team['logo_url'])
+        embed.set_image(url=team['logo_url'])
         embed.set_footer(text="AI-3 tournament")
         await announce_channel.send(content=member_tags, embed=embed)
 
