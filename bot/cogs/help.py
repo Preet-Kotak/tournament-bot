@@ -64,6 +64,16 @@ class Help(commands.Cog):
             )
 
             embed.add_field(
+                name="⚔️ Attack Management",
+                value=(
+                    "`/log-attack` — Log both attacks for a district\n"
+                    "`/edit-attack` — Edit attack stars and percent\n"
+                    "`/edit-attacker` — Change the attacker for a specific attack"
+                ),
+                inline=False
+            )
+
+            embed.add_field(
                 name="🌐 Utility",
                 value=(
                     "`/help` — Show this command reference\n"
