@@ -47,6 +47,8 @@ async def build_match_embed(match_id: int) -> Optional[str]:
 
     total1 = 0
     total2 = 0
+    total_percent1 = 0
+    total_percent2 = 0
 
     for d in range(9):
         name = DISTRICT_NAMES[d]
@@ -58,6 +60,7 @@ async def build_match_embed(match_id: int) -> Optional[str]:
             p1 = r1['override_percent'] if r1['is_overridden'] else r1['current_percent']
             col1 = f"{s1}⭐ {p1}%"
             total1 += s1
+            total_percent1 += p1
         else:
             col1 = "--"
 
@@ -66,13 +69,14 @@ async def build_match_embed(match_id: int) -> Optional[str]:
             p2 = r2['override_percent'] if r2['is_overridden'] else r2['current_percent']
             col2 = f"{s2}⭐ {p2}%"
             total2 += s2
+            total_percent2 += p2
         else:
             col2 = "--"
 
         rows.append(f"{name:<20} {col1:<13} {col2:<13}")
 
     rows.append(sep)
-    rows.append(f"{'Total':<20} {str(total1) + '⭐':<13} {str(total2) + '⭐':<13}")
+    rows.append(f"{'Total':<20} {str(total1) + '⭐ ' + str(total_percent1) + '%':<13} {str(total2) + '⭐ ' + str(total_percent2) + '%':<13}")
 
     content = "\n".join(rows)
     return f"**{t1_name} vs {t2_name}**\n```\n{content}\n```\n*Match #{match_id} • AI-3 tournament*"
