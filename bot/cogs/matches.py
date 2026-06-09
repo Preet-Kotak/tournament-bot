@@ -79,7 +79,7 @@ async def build_match_embed(match_id: int) -> Optional[str]:
     rows.append(f"{'Total':<20} {str(total1) + '⭐ ' + str(total_percent1) + '%':<13} {str(total2) + '⭐ ' + str(total_percent2) + '%':<13}")
 
     content = "\n".join(rows)
-    return f"**{t1_name} vs {t2_name}**\n```\n{content}\n```\n*Match #{match_id} • AI-3 tournament*"
+    return f"**{t1_name} vs {t2_name}**\n```\n{content}\n```"
 
 
 async def refresh_match_embed(bot: discord.Client, match_id: int):
@@ -391,25 +391,6 @@ class Matches(commands.Cog):
                         await channel.edit(category=archive_category)
                     except discord.HTTPException as e:
                         log.error(f"Failed to move channel to archive: {e}")
-
-        # Update the live embed footer to show match completed
-        if match['embed_message_id']:
-            embed_channel = self.bot.get_channel(MATCH_EMBED_CHANNEL_ID)
-            if embed_channel:
-                try:
-                    msg = await embed_channel.fetch_message(match['embed_message_id'])
-                    current_content = msg.content
-                    # Update footer by replacing the footer text
-                    if "*Match #" in current_content:
-                        updated_content = current_content.replace(
-                            f"*Match #{match_id} • AI-3 tournament*",
-                            f"*Match #{match_id} • Match Ended • AI-3 tournament*"
-                        )
-                        await msg.edit(content=updated_content, embed=None)
-                except discord.NotFound:
-                    log.warning(f"Embed message not found for match {match_id}")
-                except Exception as e:
-                    log.error(f"Failed to update match embed: {e}")
 
         await interaction.followup.send(
             embed=success_embed("Match Ended", f"Match #{match_id} ({t1_name} vs {t2_name}) has been marked as completed and archived.")
