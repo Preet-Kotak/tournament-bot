@@ -373,7 +373,9 @@ class Matches(commands.Cog):
     async def clear_data(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         async with connection.pool.acquire() as conn:
-            await conn.execute("TRUNCATE attacks, district_scores, bases, matches RESTART IDENTITY CASCADE")
+            await conn.execute(
+                "TRUNCATE attacks, district_scores, bases, matches, qualifier_scores RESTART IDENTITY CASCADE"
+            )
         await interaction.followup.send(embed=success_embed("Database Cleared", "All data has been wiped. Tables are empty and ready for testing."))
 
 
