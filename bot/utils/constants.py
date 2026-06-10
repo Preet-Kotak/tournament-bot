@@ -13,6 +13,26 @@ DISTRICT_NAMES = {
     8: "Goblin Mines",
 }
 
+# Reverse map: lowercase name → district number, for fast lookups
+DISTRICT_NUMBERS: dict[str, int] = {name.lower(): num for num, name in DISTRICT_NAMES.items()}
+
+# ── Qualifier districts ───────────────────────────────────────────────────────
+# Fill in the 6 district names used in the qualifier round.
+QUALIFIER_DISTRICTS: list[str] = [
+    "Capital Peak",
+    "Barbarian Camp",
+    "Wizard Valley",
+    "Balloon Lagoon",
+    "Builder's Workshop",
+    "Dragon Cliffs",
+]
+
+
+def resolve_district(district: str) -> Optional[int]:
+    """Return the district number for a district name string (case-insensitive), or None."""
+    return DISTRICT_NUMBERS.get(district.lower())
+
+
 def get_district_from_link(link: str) -> Optional[int]:
     parts = re.split(r"%3A", link, flags=re.IGNORECASE)
     if len(parts) >= 3:

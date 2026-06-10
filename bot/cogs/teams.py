@@ -6,8 +6,14 @@ from typing import Optional
 
 import bot.db.connection as connection
 from bot.utils.checks import is_admin, is_team_leader_or_admin
-from bot.utils.embeds import success_embed, error_embed, admin_log_embed
+from bot.utils.discord_utils import fetch_player_link, player_link
+from bot.utils.embeds import (
+    success_embed, error_embed, admin_log_embed,
+    account_info_embed, team_announce_embed, teams_list_embed, team_info_embed,
+)
+from bot.utils.autocomplete import team_autocomplete
 from bot.config import (
+    ADMIN_IDS,
     PARTICIPANT_ROLE_ID,
     ADMIN_LOG_CHANNEL_ID,
     APPROVE_ANNOUNCE_CHANNEL_ID,
@@ -24,7 +30,6 @@ class AnnounceTeamView(discord.ui.View):
 
     @discord.ui.button(label="Announce Team", style=discord.ButtonStyle.primary, custom_id="dynamic_announce_btn")
     async def announce_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from bot.config import ADMIN_IDS
         if interaction.user.id not in ADMIN_IDS:
             await interaction.response.send_message("Only admins can use this button.", ephemeral=True)
             return
@@ -44,7 +49,6 @@ class ApproveTeamView(discord.ui.View):
 
     @discord.ui.button(label="Approve Team", style=discord.ButtonStyle.success, custom_id="dynamic_approve_btn")
     async def approve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from bot.config import ADMIN_IDS
         if interaction.user.id not in ADMIN_IDS:
             await interaction.response.send_message("Only admins can use this button.", ephemeral=True)
             return
@@ -98,7 +102,10 @@ class Teams(commands.Cog):
                 member_ids
             )
             if in_team_records:
-                taken_users = ", ".join([f"<@{r['user_id']}> ({r['name']})" for r in in_team_records])
+                taken_users = ", ".join([
+                    f"{await fetch_player_link(self.bot, r['user_id'])} ({r['name']})"
+                    for r in in_team_records
+                ])
                 await interaction.followup.send(embed=error_embed("Members Already in Teams", f"The following members are already in approved teams: {taken_users}"))
                 return
                 
@@ -141,10 +148,10 @@ class Teams(commands.Cog):
                 if ADMIN_LOG_CHANNEL_ID:
                     log_channel = guild.get_channel(ADMIN_LOG_CHANNEL_ID)
                     if log_channel:
-                        member_tags = ", ".join([m.mention for m in members])
+                        member_tags = ", ".join([player_link(m.id, m.display_name) for m in members])
                         embed = admin_log_embed(
                             "New Team Registered",
-                            f"**Team Name:** {name}\n**Leader:** {member1.mention}\n**Total Members:** {len(members)}\n**Members:** {member_tags}"
+                            f"**Team Name:** {name}\n**Leader:** {player_link(member1.id, member1.display_name)}\n**Total Members:** {len(members)}\n**Members:** {member_tags}"
                         )
                         await log_channel.send(embed=embed, view=ApproveTeamView(self, name))
 
@@ -196,6 +203,7 @@ class Teams(commands.Cog):
             await interaction.followup.send(embed=success_embed("Logo Added", "Your team logo has been updated successfully."))
 
     @app_commands.command(name="approve-team", description="Approve a team and create their private channel (Admin only).")
+    @app_commands.autocomplete(team_name=team_autocomplete)
     @is_admin()
     async def approve_team(self, interaction: discord.Interaction, team_name: str):
         await interaction.response.defer(ephemeral=True)
@@ -258,23 +266,7 @@ class Teams(commands.Cog):
                 )
 
                 # Account info — pinned message
-                account_embed = discord.Embed(
-                    title="📌 AI-3 Tournament — Account Information",
-                    description=(
-                        "For the accounts used for the AI-3 Tournament:\n\n"
-                        "You can use the accounts made for AI-2, but you will need to send a friend request to both host accounts below.\n\n"
-                        "**Host Accounts:**\n"
-                        "> [Ai3-ch9 host](link)\n"
-                        "> [Ai3-ch10 host](link)\n\n"
-                        "If you do not have an account, you have **2 options:**\n\n"
-                        "**Option 1** — Make your own account and use our email to log in. "
-                        "You will still need to send a friend request to both host accounts.\n\n"
-                        "**Option 2** — We can make an account for you."
-                    ),
-                    color=discord.Color.gold()
-                )
-                account_embed.set_footer(text="AI-3 tournament")
-                pinned_msg = await channel.send(embed=account_embed)
+                pinned_msg = await channel.send(embed=account_info_embed())
                 await pinned_msg.pin()
 
                 await interaction.followup.send(embed=success_embed("Team Approved", f"Team '{team_name}' approved and channel {channel.mention} created."))
@@ -284,6 +276,7 @@ class Teams(commands.Cog):
                 await interaction.followup.send(embed=error_embed("Error", "An unexpected error occurred while approving the team."))
 
     @app_commands.command(name="announce-team", description="Announce an approved team in the announcements channel (Admin only).")
+    @app_commands.autocomplete(team_name=team_autocomplete)
     @is_admin()
     async def announce_team(self, interaction: discord.Interaction, team_name: str):
         await interaction.response.defer(ephemeral=True)
@@ -314,17 +307,12 @@ class Teams(commands.Cog):
             await interaction.followup.send(embed=error_embed("Not Found", "Could not find the announcement channel."))
             return
 
-        embed = discord.Embed(
-            title=f"Welcome {team_name} to Anshu's Invitational 3!",
-            color=discord.Color.gold()
-        )
-        embed.set_image(url=team['logo_url'])
-        embed.set_footer(text="AI-3 tournament")
-        await announce_channel.send(content=member_tags, embed=embed)
+        await announce_channel.send(content=member_tags, embed=team_announce_embed(team_name, team['logo_url']))
 
         await interaction.followup.send(embed=success_embed("Announced", f"Team '{team_name}' has been announced."))
 
     @app_commands.command(name="delete-team", description="Delete a team and its roles completely (Admin only).")
+    @app_commands.autocomplete(team_name=team_autocomplete)
     @is_admin()
     async def delete_team(self, interaction: discord.Interaction, team_name: str):
         await interaction.response.defer(ephemeral=True)
@@ -371,6 +359,7 @@ class Teams(commands.Cog):
             await interaction.followup.send(embed=success_embed("Team Deleted", f"Team '{team_name}' has been deleted completely."))
 
     @app_commands.command(name="edit-team", description="Change a team's name or its entire roster (Admin only).")
+    @app_commands.autocomplete(team_name=team_autocomplete)
     @is_admin()
     async def edit_team(
         self,
@@ -446,25 +435,28 @@ class Teams(commands.Cog):
                     member_ids, team_id
                 )
                 if in_team_records:
-                    taken_users = ", ".join([f"<@{r['user_id']}> ({r['name']})" for r in in_team_records])
+                    taken_users = ", ".join([
+                        f"{await fetch_player_link(self.bot, r['user_id'])} ({r['name']})"
+                        for r in in_team_records
+                    ])
                     await interaction.followup.send(embed=error_embed("Members Already in Teams", f"The following members are already in other approved teams: {taken_users}"))
                     return
 
                 # Fetch old members to remove roles
                 old_member_records = await conn.fetch("SELECT user_id FROM team_members WHERE team_id = $1", team_id)
                 old_member_ids = {r['user_id'] for r in old_member_records}
-                
+                new_member_ids = {m.id for m in members}
+                leaving_member_ids = old_member_ids - new_member_ids  # only members being removed
+
                 team_role = guild.get_role(team['team_role_id'])
                 participant_role = guild.get_role(PARTICIPANT_ROLE_ID)
-                
-                # Remove roles from old members
-                for old_id in old_member_ids:
+
+                # Remove team role (and participant role) only from members who are leaving
+                for old_id in leaving_member_ids:
                     member = guild.get_member(old_id)
                     if member and team_role:
                         try:
                             await member.remove_roles(team_role)
-                            if participant_role:
-                                await member.remove_roles(participant_role)
                         except discord.HTTPException:
                             pass
 
@@ -483,6 +475,21 @@ class Teams(commands.Cog):
                         columns=['team_id', 'user_id', 'role'],
                         records=member_records
                     )
+
+                # Remove participant role from leavers who are no longer on any team
+                if participant_role:
+                    for old_id in leaving_member_ids:
+                        still_on_team = await conn.fetchval(
+                            "SELECT EXISTS(SELECT 1 FROM team_members WHERE user_id = $1)",
+                            old_id
+                        )
+                        if not still_on_team:
+                            member = guild.get_member(old_id)
+                            if member and participant_role in member.roles:
+                                try:
+                                    await member.remove_roles(participant_role)
+                                except discord.HTTPException:
+                                    pass
                     
                 # Add roles to new members
                 for member in members:
@@ -500,6 +507,7 @@ class Teams(commands.Cog):
             await interaction.followup.send(embed=success_embed("Team Edited", f"Team '{final_name}' has been successfully updated."))
 
     @app_commands.command(name="set-coleader", description="Give a team member co-leader permissions (Admin only).")
+    @app_commands.autocomplete(team_name=team_autocomplete)
     @is_admin()
     async def set_sudo_leader(self, interaction: discord.Interaction, team_name: str, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
@@ -512,19 +520,19 @@ class Teams(commands.Cog):
                 
             record = await conn.fetchrow("SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2", team['id'], member.id)
             if not record:
-                await interaction.followup.send(embed=error_embed("Not In Team", f"{member.mention} is not a member of '{team_name}'."))
+                await interaction.followup.send(embed=error_embed("Not In Team", f"{player_link(member.id, member.display_name)} is not a member of '{team_name}'."))
                 return
                 
             if record['role'] == 'leader':
-                await interaction.followup.send(embed=error_embed("Already Leader", f"{member.mention} is already the primary leader."))
+                await interaction.followup.send(embed=error_embed("Already Leader", f"{player_link(member.id, member.display_name)} is already the primary leader."))
                 return
                 
             if record['role'] == 'sudo':
-                await interaction.followup.send(embed=error_embed("Already Sudo", f"{member.mention} is already a sudo leader."))
+                await interaction.followup.send(embed=error_embed("Already Sudo", f"{player_link(member.id, member.display_name)} is already a sudo leader."))
                 return
                 
             await conn.execute("UPDATE team_members SET role = 'sudo' WHERE team_id = $1 AND user_id = $2", team['id'], member.id)
-            await interaction.followup.send(embed=success_embed("Sudo Leader Set", f"{member.mention} has been granted sudo leader permissions for '{team_name}'."))
+            await interaction.followup.send(embed=success_embed("Sudo Leader Set", f"{player_link(member.id, member.display_name)} has been granted sudo leader permissions for '{team_name}'."))
 
     @app_commands.command(name="teams-list", description="View all approved teams.")
     async def teams_list(self, interaction: discord.Interaction):
@@ -539,27 +547,7 @@ class Teams(commands.Cog):
             await interaction.followup.send(embed=error_embed("No Teams", "No approved teams found."))
             return
 
-        embed = discord.Embed(
-            title="🏆 Approved Teams",
-            description=f"Total: **{len(teams)}** teams",
-            color=discord.Color.blue()
-        )
-        
-        team_list = []
-        for t in teams:
-            team_list.append(f"• **{t['name']}**")
-        
-        embed.add_field(name="Teams", value="\n".join(team_list), inline=False)
-        embed.set_footer(text="AI-3 tournament")
-        await interaction.followup.send(embed=embed)
-
-    async def team_autocomplete(self, interaction: discord.Interaction, current: str):
-        async with connection.pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT name FROM teams WHERE is_approved = TRUE AND LOWER(name) LIKE $1 LIMIT 25",
-                f"%{current.lower()}%"
-            )
-        return [app_commands.Choice(name=r['name'], value=r['name']) for r in rows]
+        await interaction.followup.send(embed=teams_list_embed(teams))
 
     @app_commands.command(name="team-info", description="View detailed information about a team.")
     @app_commands.autocomplete(team_name=team_autocomplete)
@@ -627,83 +615,15 @@ class Teams(commands.Cog):
                 )
                 completed_match_scores[match['id']] = {s['team_id']: (s['total_stars'], s['total_percent']) for s in scores}
 
-        embed = discord.Embed(
-            title=f"📋 {team['name']}",
-            color=discord.Color.gold() if team['is_approved'] else discord.Color.greyple()
-        )
-
-        if team['logo_url']:
-            embed.set_thumbnail(url=team['logo_url'])
-
-        # Members section
+        # Build member lines with real usernames
         member_lines = []
         for m in members:
             role_icon = "👑" if m['role'] == 'leader' else "⭐" if m['role'] == 'sudo' else "👤"
             role_text = "(Leader)" if m['role'] == 'leader' else "(Co-Leader)" if m['role'] == 'sudo' else ""
-            member_lines.append(f"{role_icon} <@{m['user_id']}> {role_text}")
+            plink = await fetch_player_link(self.bot, m['user_id'])
+            member_lines.append(f"{role_icon} {plink} {role_text}")
 
-        embed.add_field(
-            name=f"Members ({len(members)})",
-            value="\n".join(member_lines) if member_lines else "No members",
-            inline=False
-        )
-
-        # Status
-        status_text = "✅ Approved" if team['is_approved'] else "⏳ Pending Approval"
-        embed.add_field(name="Status", value=status_text, inline=True)
-
-        # Created date
-        if team['created_at']:
-            timestamp = int(team['created_at'].timestamp())
-            embed.add_field(name="Created", value=f"<t:{timestamp}:R>", inline=True)
-
-        # Upcoming matches (only if exists)
-        if active_matches:
-            match_lines = []
-            for match in active_matches:
-                status_emoji = "🟢" if match['status'] == 'active' else "🟡" if match['status'] == 'scheduled' else "⚪"
-                match_text = f"{status_emoji} Match #{match['id']}: {match['t1']} vs {match['t2']}"
-                
-                if match['status'] == 'scheduled' and match['scheduled_time']:
-                    timestamp = int(match['scheduled_time'].timestamp())
-                    match_text += f" • <t:{timestamp}:R>"
-                elif match['status'] == 'active':
-                    match_text += " • In Progress"
-                
-                match_lines.append(match_text)
-            embed.add_field(
-                name=f"Upcoming Matches ({len(active_matches)})",
-                value="\n".join(match_lines),
-                inline=False
-            )
-
-        # Completed matches (only if exists)
-        if completed_matches:
-            match_lines = []
-            for match in completed_matches:
-                # Get scores from pre-fetched data
-                score_dict = completed_match_scores.get(match['id'], {})
-                team1_stars, team1_percent = score_dict.get(match['team1_id'], (0, 0))
-                team2_stars, team2_percent = score_dict.get(match['team2_id'], (0, 0))
-                
-                # Determine winner
-                if team1_stars > team2_stars:
-                    winner = match['t1']
-                elif team2_stars > team1_stars:
-                    winner = match['t2']
-                else:
-                    winner = "Tie"
-                
-                match_text = f"🏁 Match #{match['id']}: {match['t1']} vs {match['t2']}\n   Score: {team1_stars}⭐ {team1_percent}% - {team2_stars}⭐ {team2_percent}% • Winner: **{winner}**"
-                match_lines.append(match_text)
-            
-            embed.add_field(
-                name=f"Completed Matches ({len(completed_matches)})",
-                value="\n".join(match_lines),
-                inline=False
-            )
-
-        embed.set_footer(text="AI-3 tournament")
+        embed = team_info_embed(team, member_lines, active_matches, completed_matches, completed_match_scores)
         await interaction.followup.send(embed=embed)
 
 async def setup(bot: commands.Bot):

@@ -83,6 +83,30 @@ async def setup_schema():
             submitted_by BIGINT NOT NULL,
             UNIQUE(team_id, match_id, district)
         );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS player_district_stats (
+            id SERIAL PRIMARY KEY,
+            player_id BIGINT NOT NULL,
+            match_id INTEGER REFERENCES matches(id) ON DELETE CASCADE,
+            district INTEGER CHECK (district BETWEEN 0 AND 8),
+            completed BOOLEAN DEFAULT FALSE,
+            final_stars INTEGER DEFAULT 0,
+            final_percent INTEGER DEFAULT 0,
+            UNIQUE(player_id, match_id, district)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS qualifier_scores (
+            id SERIAL PRIMARY KEY,
+            team_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
+            district TEXT NOT NULL,
+            stars INTEGER NOT NULL CHECK (stars BETWEEN 0 AND 3),
+            percent INTEGER NOT NULL CHECK (percent BETWEEN 0 AND 100),
+            submitted_by BIGINT NOT NULL,
+            submitted_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(team_id, district)
+        );
         """
     ]
 

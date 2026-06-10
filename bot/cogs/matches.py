@@ -2,12 +2,18 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
+from datetime import datetime
 from typing import Optional
 
 import bot.db.connection as connection
 from bot.utils.checks import is_admin
-from bot.utils.embeds import success_embed, error_embed
+from bot.utils.embeds import success_embed, error_embed, upcoming_matches_embed
 from bot.utils.constants import DISTRICT_NAMES
+from bot.utils.autocomplete import (
+    team_autocomplete,
+    pending_or_scheduled_match_autocomplete,
+    active_match_autocomplete,
+)
 from bot.config import (
     ADMIN_IDS,
     MATCH_CATEGORY_ID,
@@ -113,52 +119,6 @@ class Matches(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    async def team_autocomplete(self, interaction: discord.Interaction, current: str):
-        async with connection.pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT name FROM teams WHERE is_approved = TRUE AND LOWER(name) LIKE $1 LIMIT 25",
-                f"%{current.lower()}%"
-            )
-        return [app_commands.Choice(name=r['name'], value=r['name']) for r in rows]
-
-    async def match_autocomplete(self, interaction: discord.Interaction, current: str):
-        async with connection.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT m.id, t1.name AS t1, t2.name AS t2, m.status
-                FROM matches m
-                JOIN teams t1 ON m.team1_id = t1.id
-                JOIN teams t2 ON m.team2_id = t2.id
-                WHERE m.status IN ('pending', 'scheduled')
-                ORDER BY m.id DESC LIMIT 25
-                """
-            )
-        choices = []
-        for r in rows:
-            label = f"#{r['id']}: {r['t1']} vs {r['t2']} ({r['status']})"
-            if current.lower() in label.lower():
-                choices.append(app_commands.Choice(name=label[:100], value=r['id']))
-        return choices
-
-    async def active_match_autocomplete(self, interaction: discord.Interaction, current: str):
-        async with connection.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT m.id, t1.name AS t1, t2.name AS t2, m.status
-                FROM matches m
-                JOIN teams t1 ON m.team1_id = t1.id
-                JOIN teams t2 ON m.team2_id = t2.id
-                WHERE m.status = 'active'
-                ORDER BY m.id DESC LIMIT 25
-                """
-            )
-        choices = []
-        for r in rows:
-            label = f"#{r['id']}: {r['t1']} vs {r['t2']} ({r['status']})"
-            if current.lower() in label.lower():
-                choices.append(app_commands.Choice(name=label[:100], value=r['id']))
-        return choices
-
     @app_commands.command(name="set-match", description="Schedule a match between two teams (Admin only).")
     @app_commands.autocomplete(team1=team_autocomplete, team2=team_autocomplete)
     @is_admin()
@@ -237,10 +197,10 @@ class Matches(commands.Cog):
             await interaction.followup.send(embed=success_embed("Match Scheduled", msg))
 
     @app_commands.command(name="schedule-match", description="Set the time and mark a match as scheduled (Admin only).")
-    @app_commands.autocomplete(match_id=match_autocomplete)
+    @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete)
     @is_admin()
     async def schedule_match(self, interaction: discord.Interaction, match_id: int, unix_timestamp: int):
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
 
         async with connection.pool.acquire() as conn:
             match = await conn.fetchrow("SELECT id, status FROM matches WHERE id = $1", match_id)
@@ -251,7 +211,6 @@ class Matches(commands.Cog):
                 await interaction.followup.send(embed=error_embed("Invalid", f"Match #{match_id} cannot be scheduled at this stage."))
                 return
 
-            from datetime import datetime
             dt = datetime.utcfromtimestamp(unix_timestamp)
             await conn.execute(
                 "UPDATE matches SET scheduled_time = $1, status = 'scheduled' WHERE id = $2",
@@ -266,7 +225,7 @@ class Matches(commands.Cog):
         )
 
     @app_commands.command(name="start-match", description="Start a match and post the live embed (Admin only).")
-    @app_commands.autocomplete(match_id=match_autocomplete)
+    @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete)
     @is_admin()
     async def start_match(self, interaction: discord.Interaction, match_id: int):
         await interaction.response.defer(ephemeral=True)
@@ -341,19 +300,7 @@ class Matches(commands.Cog):
             await interaction.followup.send(embed=error_embed("No Matches", "No upcoming matches found."))
             return
 
-        embed = discord.Embed(title="📅 Upcoming Matches", color=discord.Color.blue())
-        for m in rows:
-            if m['status'] == 'scheduled' and m['scheduled_time']:
-                time_str = f"🟡 Scheduled — <t:{int(m['scheduled_time'].timestamp())}:F>"
-            else:
-                time_str = "🕐 Not yet scheduled"
-            embed.add_field(
-                name=f"Match #{m['id']}: {m['team1_name']} vs {m['team2_name']}",
-                value=time_str,
-                inline=False
-            )
-        embed.set_footer(text="AI-3 tournament")
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=upcoming_matches_embed(rows))
 
 
     @app_commands.command(name="end-match", description="End a match and move it to archive (Admin only).")
@@ -397,7 +344,7 @@ class Matches(commands.Cog):
         )
 
     @app_commands.command(name="delete-match", description="Delete a match completely (Admin only).")
-    @app_commands.autocomplete(match_id=match_autocomplete)
+    @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete)
     @is_admin()
     async def delete_match(self, interaction: discord.Interaction, match_id: int):
         await interaction.response.defer(ephemeral=True)

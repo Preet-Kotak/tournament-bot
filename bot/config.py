@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+if not DISCORD_TOKEN:
+    raise RuntimeError(
+        "DISCORD_TOKEN is not set. Add it to your .env file or environment variables."
+    )
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Load Admin IDs as a list of integers

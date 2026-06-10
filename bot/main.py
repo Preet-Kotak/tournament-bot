@@ -8,10 +8,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import discord
 from discord.ext import commands
+from discord import app_commands
 import logging
 from bot.config import DISCORD_TOKEN, PORT, RENDER_URL, KEEPALIVE_INTERVAL
 from bot.db.connection import init_db, close_db
 from bot.db.models import setup_schema
+from bot.utils.checks import NotAdmin, NotTeamLeader, NotTeamMember
+from bot.utils.embeds import error_embed
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -57,6 +60,24 @@ class TournamentManagerBot(commands.Bot):
         log.info(f"Logged in as {self.user} (ID: {self.user.id})")
         log.info("------")
 
+    async def on_app_command_error(self, interaction: discord.Interaction, error: Exception):
+        """Central handler for slash command errors, including permission check failures."""
+        if isinstance(error, (NotAdmin, NotTeamLeader, NotTeamMember)):
+            embed = error_embed("Permission Denied", str(error))
+        elif isinstance(error, app_commands.CommandNotFound):
+            return  # ignore silently
+        else:
+            log.error(f"Unhandled app command error: {error}", exc_info=error)
+            embed = error_embed("Unexpected Error", "Something went wrong. Please try again.")
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception:
+            pass  # interaction may have already expired
+
 def start_http_server_sync(port: int):
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -90,8 +111,17 @@ async def self_ping():
 async def main():
     bot = TournamentManagerBot()
     asyncio.create_task(self_ping())
-    async with bot:
-        await bot.start(DISCORD_TOKEN)
+    try:
+        async with bot:
+            await bot.start(DISCORD_TOKEN)
+    except discord.LoginFailure as exc:
+        log.error("Discord login failed. Check that DISCORD_TOKEN is set and valid.")
+        raise
+    except aiohttp.ClientConnectorError as exc:
+        log.error(
+            "Discord connection failed. Verify internet access and that discord.com can be resolved from this machine."
+        )
+        raise
 
 if __name__ == "__main__":
     start_http_server_sync(PORT)
