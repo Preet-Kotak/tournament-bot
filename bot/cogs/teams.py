@@ -189,18 +189,24 @@ class Teams(commands.Cog):
             team_id = record['id']
             team_name = record['name']
             
+            # Check if replacing old logo
+            old_logo = await conn.fetchval("SELECT logo_url FROM teams WHERE id = $1", team_id)
+            was_replaced = old_logo is not None
+
             await conn.execute("UPDATE teams SET logo_url = $1 WHERE id = $2", logo.url, team_id)
-            
+
             # Send Admin Log
             if ADMIN_LOG_CHANNEL_ID:
                 log_channel = interaction.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
                 if log_channel:
-                    embed = admin_log_embed("Team Logo Uploaded", f"Team: **{team_name}**")
+                    action = "Logo Updated" if was_replaced else "Team Logo Uploaded"
+                    embed = admin_log_embed(action, f"Team: **{team_name}**")
                     embed.set_image(url=logo.url)
                     view = AnnounceTeamView(self, team_name)
                     await log_channel.send(embed=embed, view=view)
 
-            await interaction.followup.send(embed=success_embed("Logo Added", "Your team logo has been updated successfully."))
+            msg = "Logo Updated" if was_replaced else "Logo Added"
+            await interaction.followup.send(embed=success_embed(msg, "Your team logo has been updated successfully."))
 
     @app_commands.command(name="approve-team", description="Approve a team and create their private channel (Admin only).")
     @app_commands.autocomplete(team_name=team_autocomplete)
@@ -404,7 +410,7 @@ class Teams(commands.Cog):
                     channel = guild.get_channel(team['channel_id'])
                     if channel:
                         try:
-                            await channel.edit(name=f"team-{new_name.lower().replace(' ', '-')}")
+                            await channel.edit(name=new_name.lower().replace(' ', '-'))
                         except discord.HTTPException:
                             pass
                         

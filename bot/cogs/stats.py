@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 from typing import Optional
+from collections import defaultdict
 
 import bot.db.connection as connection
 from bot.utils.embeds import success_embed, error_embed, FOOTER
@@ -641,6 +642,317 @@ class Stats(commands.Cog):
             log.error(f"Error in match_stat: {e}")
             await interaction.followup.send(
                 embed=error_embed("Database Error", "An error occurred while fetching match statistics."),
+                ephemeral=True,
+            )
+
+
+    # ── /relative-lb-player ─────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="relative-lb-player",
+        description="Player leaderboard with scores normalized across all districts."
+    )
+    async def relative_lb_player(self, interaction: discord.Interaction):
+        """
+        Formula:
+            adj_stars   = (player_avg_on_district / district_avg) * global_avg_stars
+            adj_percent = (player_avg_on_district / district_avg) * global_avg_percent
+        Capped at 3 / 100.  Only counts player_district_stats where completed = TRUE.
+        """
+        await interaction.response.defer(ephemeral=False)
+
+        try:
+            async with connection.pool.acquire() as conn:
+                # 1. Global average (avg of all 9 district averages)
+                global_avg = await conn.fetchrow(
+                    """
+                    SELECT
+                        AVG(avg_stars)   AS global_avg_stars,
+                        AVG(avg_percent) AS global_avg_percent
+                    FROM (
+                        SELECT district,
+                               AVG(current_stars)   AS avg_stars,
+                               AVG(current_percent) AS avg_percent
+                        FROM district_scores ds
+                        JOIN matches m ON ds.match_id = m.id
+                        WHERE m.status = 'completed'
+                          AND ds.attack2_done = TRUE
+                        GROUP BY district
+                    ) district_avgs
+                    """
+                )
+                if not global_avg or global_avg["global_avg_stars"] is None:
+                    await interaction.followup.send(
+                        embed=error_embed("No Data", "No completed matches found.")
+                    )
+                    return
+
+                global_avg_stars   = float(global_avg["global_avg_stars"])
+                global_avg_percent = float(global_avg["global_avg_percent"])
+
+                # 2. Per-district averages
+                district_avgs = await conn.fetch(
+                    """
+                    SELECT district,
+                           AVG(current_stars)   AS avg_stars,
+                           AVG(current_percent) AS avg_percent
+                    FROM district_scores ds
+                    JOIN matches m ON ds.match_id = m.id
+                    WHERE m.status = 'completed'
+                      AND ds.attack2_done = TRUE
+                    GROUP BY district
+                    """
+                )
+                district_avg_map = {
+                    r["district"]: (float(r["avg_stars"]), float(r["avg_percent"]))
+                    for r in district_avgs
+                }
+
+                # 3. Player averages per district (from player_district_stats, completed only)
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        pds.player_id,
+                        pds.district,
+                        AVG(pds.final_stars)   AS avg_stars,
+                        AVG(pds.final_percent) AS avg_percent,
+                        COUNT(*) AS match_count
+                    FROM player_district_stats pds
+                    JOIN matches m ON pds.match_id = m.id
+                    WHERE m.status = 'completed'
+                      AND pds.completed = TRUE
+                    GROUP BY pds.player_id, pds.district
+                    """
+                )
+
+                if not rows:
+                    await interaction.followup.send(
+                        embed=error_embed("No Data", "No player statistics found.")
+                    )
+                    return
+
+                # 4. Group by player and normalize
+                player_data = defaultdict(list)
+                for r in rows:
+                    player_data[r["player_id"]].append(
+                        (r["district"], r["avg_stars"], r["avg_percent"], r["match_count"])
+                    )
+
+                player_scores = []
+                for player_id, districts in player_data.items():
+                    adj_stars_sum = 0.0
+                    adj_pct_sum   = 0.0
+                    district_count = 0
+                    for district, avg_stars, avg_pct, _ in districts:
+                        if district not in district_avg_map:
+                            continue
+                        d_avg_stars, d_avg_pct = district_avg_map[district]
+                        if d_avg_stars == 0 or d_avg_pct == 0:
+                            continue
+
+                        ratio_stars = avg_stars / d_avg_stars
+                        ratio_pct   = avg_pct   / d_avg_pct
+
+                        adj_stars = min(ratio_stars * global_avg_stars, 3.0)
+                        adj_pct   = min(ratio_pct   * global_avg_percent, 100.0)
+
+                        adj_stars_sum += adj_stars
+                        adj_pct_sum   += adj_pct
+                        district_count += 1
+
+                    if district_count == 0:
+                        continue
+
+                    avg_adj_stars = round(adj_stars_sum / district_count, 2)
+                    avg_adj_pct   = round(adj_pct_sum   / district_count, 1)
+                    player_scores.append(
+                        (player_id, avg_adj_stars, avg_adj_pct, district_count)
+                    )
+
+                # 5. Sort
+                player_scores.sort(key=lambda x: (x[1], x[2]), reverse=True)
+
+                if not player_scores:
+                    await interaction.followup.send(
+                        embed=error_embed("No Data", "No player scores could be computed.")
+                    )
+                    return
+
+                lines = []
+                for idx, (player_id, adj_stars, adj_pct, d_count) in enumerate(
+                    player_scores, start=1
+                ):
+                    plink = await fetch_player_link(self.bot, player_id)
+                    lines.append(
+                        f"{_rank(idx)} {plink} — {adj_stars}⭐ {adj_pct}% ({d_count} districts)"
+                    )
+
+                title = (
+                    "🏆 Relative Player Leaderboard\n"
+                    f"Global base: {round(global_avg_stars, 2)}⭐ {round(global_avg_percent, 1)}%"
+                )
+                await _send_paginated(interaction, title, lines)
+
+        except Exception as e:
+            log.error(f"Error in relative_lb_player: {e}")
+            await interaction.followup.send(
+                embed=error_embed("Database Error", "An error occurred while fetching the leaderboard."),
+                ephemeral=True,
+            )
+
+    # ── /relative-lb-team ─────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="relative-lb-team",
+        description="Team leaderboard with scores normalized across all districts."
+    )
+    async def relative_lb_team(self, interaction: discord.Interaction):
+        """
+        Formula:
+            adj_stars   = (team_avg_on_district / district_avg) * global_avg_stars
+            adj_percent = (team_avg_on_district / district_avg) * global_avg_percent
+        Capped at 3 / 100.  Only counts district_scores where attack2_done = TRUE.
+        """
+        await interaction.response.defer(ephemeral=False)
+
+        try:
+            async with connection.pool.acquire() as conn:
+                # 1. Global average
+                global_avg = await conn.fetchrow(
+                    """
+                    SELECT
+                        AVG(avg_stars)   AS global_avg_stars,
+                        AVG(avg_percent) AS global_avg_percent
+                    FROM (
+                        SELECT district,
+                               AVG(current_stars)   AS avg_stars,
+                               AVG(current_percent) AS avg_percent
+                        FROM district_scores ds
+                        JOIN matches m ON ds.match_id = m.id
+                        WHERE m.status = 'completed'
+                          AND ds.attack2_done = TRUE
+                        GROUP BY district
+                    ) district_avgs
+                    """
+                )
+                if not global_avg or global_avg["global_avg_stars"] is None:
+                    await interaction.followup.send(
+                        embed=error_embed("No Data", "No completed matches found.")
+                    )
+                    return
+
+                global_avg_stars   = float(global_avg["global_avg_stars"])
+                global_avg_percent = float(global_avg["global_avg_percent"])
+
+                # 2. Per-district averages
+                district_avgs = await conn.fetch(
+                    """
+                    SELECT district,
+                           AVG(current_stars)   AS avg_stars,
+                           AVG(current_percent) AS avg_percent
+                    FROM district_scores ds
+                    JOIN matches m ON ds.match_id = m.id
+                    WHERE m.status = 'completed'
+                      AND ds.attack2_done = TRUE
+                    GROUP BY district
+                    """
+                )
+                district_avg_map = {
+                    r["district"]: (float(r["avg_stars"]), float(r["avg_percent"]))
+                    for r in district_avgs
+                }
+
+                # 3. Team averages per district
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        ds.team_id,
+                        t.name AS team_name,
+                        ds.district,
+                        AVG(ds.current_stars)   AS avg_stars,
+                        AVG(ds.current_percent) AS avg_percent,
+                        COUNT(*) AS match_count
+                    FROM district_scores ds
+                    JOIN matches m ON ds.match_id = m.id
+                    JOIN teams t ON ds.team_id = t.id
+                    WHERE m.status = 'completed'
+                      AND ds.attack2_done = TRUE
+                    GROUP BY ds.team_id, t.name, ds.district
+                    """
+                )
+
+                if not rows:
+                    await interaction.followup.send(
+                        embed=error_embed("No Data", "No team statistics found.")
+                    )
+                    return
+
+                # 4. Group by team and normalize
+                team_data = defaultdict(list)
+                for r in rows:
+                    team_data[r["team_id"]].append(
+                        (r["team_name"], r["district"], r["avg_stars"], r["avg_percent"])
+                    )
+
+                team_scores = []
+                for team_id, districts in team_data.items():
+                    team_name = districts[0][0]
+                    adj_stars_sum = 0.0
+                    adj_pct_sum   = 0.0
+                    district_count = 0
+                    for _, district, avg_stars, avg_pct in districts:
+                        if district not in district_avg_map:
+                            continue
+                        d_avg_stars, d_avg_pct = district_avg_map[district]
+                        if d_avg_stars == 0 or d_avg_pct == 0:
+                            continue
+
+                        ratio_stars = avg_stars / d_avg_stars
+                        ratio_pct   = avg_pct   / d_avg_pct
+
+                        adj_stars = min(ratio_stars * global_avg_stars, 3.0)
+                        adj_pct   = min(ratio_pct   * global_avg_percent, 100.0)
+
+                        adj_stars_sum += adj_stars
+                        adj_pct_sum   += adj_pct
+                        district_count += 1
+
+                    if district_count == 0:
+                        continue
+
+                    avg_adj_stars = round(adj_stars_sum / district_count, 2)
+                    avg_adj_pct   = round(adj_pct_sum   / district_count, 1)
+                    team_scores.append(
+                        (team_id, team_name, avg_adj_stars, avg_adj_pct, district_count)
+                    )
+
+                # 5. Sort
+                team_scores.sort(key=lambda x: (x[2], x[3]), reverse=True)
+
+                if not team_scores:
+                    await interaction.followup.send(
+                        embed=error_embed("No Data", "No team scores could be computed.")
+                    )
+                    return
+
+                lines = []
+                for idx, (team_id, team_name, adj_stars, adj_pct, d_count) in enumerate(
+                    team_scores, start=1
+                ):
+                    lines.append(
+                        f"{_rank(idx)} **{team_name}** — {adj_stars}⭐ {adj_pct}% ({d_count} districts)"
+                    )
+
+                title = (
+                    "🏆 Relative Team Leaderboard\n"
+                    f"Global base: {round(global_avg_stars, 2)}⭐ {round(global_avg_percent, 1)}%"
+                )
+                await _send_paginated(interaction, title, lines)
+
+        except Exception as e:
+            log.error(f"Error in relative_lb_team: {e}")
+            await interaction.followup.send(
+                embed=error_embed("Database Error", "An error occurred while fetching the leaderboard."),
                 ephemeral=True,
             )
 
