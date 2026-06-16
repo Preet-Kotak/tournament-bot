@@ -226,7 +226,7 @@ class Stats(commands.Cog):
             for idx, row in enumerate(rows, start=1):
                 avg_stars = round(row["avg_stars"], 1)
                 avg_percent = round(row["avg_percent"], 1)
-                plink = await fetch_player_link(self.bot, row['player_id'])
+                plink = await fetch_player_link(self.bot, row['player_id'], interaction.guild)
                 lines.append(
                     f"{_rank(idx)} {plink} — {avg_stars}⭐ {avg_percent}% ({row['match_count']} matches)"
                 )
@@ -465,7 +465,7 @@ class Stats(commands.Cog):
 
             lines = []
             for row in rows:
-                plink = await fetch_player_link(self.bot, row['attacker_id'])
+                plink = await fetch_player_link(self.bot, row['attacker_id'], interaction.guild)
                 lines.append(
                     f"{row['team1_name']}_vs_{row['team2_name']} | {DISTRICT_NAMES.get(row['district'], str(row['district']))}\n"
                     f"{plink} {row['stars_before']}⭐ {row['percent_before']}% → "
@@ -782,7 +782,7 @@ class Stats(commands.Cog):
                 for idx, (player_id, adj_stars, adj_pct, d_count) in enumerate(
                     player_scores, start=1
                 ):
-                    plink = await fetch_player_link(self.bot, player_id)
+                    plink = await fetch_player_link(self.bot, player_id, interaction.guild)
                     lines.append(
                         f"{_rank(idx)} {plink} — {adj_stars}⭐ {adj_pct}% ({d_count} districts)"
                     )

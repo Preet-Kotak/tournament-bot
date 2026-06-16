@@ -3,15 +3,21 @@ Shared Discord API helpers.
 """
 import discord
 import logging
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
 
-async def get_username(bot: discord.Client, user_id: int) -> str:
+async def get_username(bot: discord.Client, user_id: int, guild: Optional[discord.Guild] = None) -> str:
     """
-    Fetch a user's global display name from Discord.
-    Falls back to their username, then to the raw ID string if the fetch fails.
+    Return the best available display name for a user.
+    If a guild is provided, tries the server nickname first (guild.get_member),
+    then falls back to fetching the global user. Falls back to raw ID on failure.
     """
+    if guild:
+        member = guild.get_member(user_id)
+        if member:
+            return member.display_name
     try:
         user = await bot.fetch_user(user_id)
         return user.display_name or user.name
@@ -25,7 +31,8 @@ def player_link(user_id: int, display_name: str) -> str:
     return f"[**{display_name}**](https://discord.com/users/{user_id})"
 
 
-async def fetch_player_link(bot: discord.Client, user_id: int) -> str:
-    """Fetch username and return a formatted hyperlink in one call."""
-    name = await get_username(bot, user_id)
+async def fetch_player_link(bot: discord.Client, user_id: int, guild: Optional[discord.Guild] = None) -> str:
+    """Fetch display name and return a formatted hyperlink in one call.
+    Pass guild to prefer the server nickname over the global username."""
+    name = await get_username(bot, user_id, guild=guild)
     return player_link(user_id, name)

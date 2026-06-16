@@ -2,8 +2,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
+import io
 from typing import Optional
 
+import aiohttp
 import bot.db.connection as connection
 from bot.utils.checks import is_admin, is_team_leader_or_admin
 from bot.utils.discord_utils import fetch_player_link, player_link
@@ -17,7 +19,8 @@ from bot.config import (
     PARTICIPANT_ROLE_ID,
     ADMIN_LOG_CHANNEL_ID,
     APPROVE_ANNOUNCE_CHANNEL_ID,
-    TEAM_CHANNEL_CATEGORY_ID
+    TEAM_CHANNEL_CATEGORY_ID,
+    LOGO_STORAGE_CHANNEL_ID,
 )
 
 log = logging.getLogger(__name__)
@@ -103,7 +106,7 @@ class Teams(commands.Cog):
             )
             if in_team_records:
                 taken_users = ", ".join([
-                    f"{await fetch_player_link(self.bot, r['user_id'])} ({r['name']})"
+                    f"{await fetch_player_link(self.bot, r['user_id'], interaction.guild)} ({r['name']})"
                     for r in in_team_records
                 ])
                 await interaction.followup.send(embed=error_embed("Members Already in Teams", f"The following members are already in approved teams: {taken_users}"))
@@ -193,7 +196,26 @@ class Teams(commands.Cog):
             old_logo = await conn.fetchval("SELECT logo_url FROM teams WHERE id = $1", team_id)
             was_replaced = old_logo is not None
 
-            await conn.execute("UPDATE teams SET logo_url = $1 WHERE id = $2", logo.url, team_id)
+            # Download image bytes and re-upload to storage channel for a permanent URL
+            permanent_url = logo.url  # fallback if storage channel isn't configured
+            if LOGO_STORAGE_CHANNEL_ID:
+                storage_channel = interaction.guild.get_channel(LOGO_STORAGE_CHANNEL_ID)
+                if storage_channel:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(logo.url) as resp:
+                                if resp.status == 200:
+                                    image_bytes = await resp.read()
+                        ext = logo.filename.rsplit(".", 1)[-1] if "." in logo.filename else "png"
+                        filename = f"{team_name.lower().replace(' ', '_')}_logo.{ext}"
+                        stored_msg = await storage_channel.send(
+                            file=discord.File(io.BytesIO(image_bytes), filename=filename)
+                        )
+                        permanent_url = stored_msg.attachments[0].url
+                    except Exception as e:
+                        log.warning(f"Failed to store logo in storage channel: {e}")
+
+            await conn.execute("UPDATE teams SET logo_url = $1 WHERE id = $2", permanent_url, team_id)
 
             # Send Admin Log
             if ADMIN_LOG_CHANNEL_ID:
@@ -207,6 +229,59 @@ class Teams(commands.Cog):
 
             msg = "Logo Updated" if was_replaced else "Logo Added"
             await interaction.followup.send(embed=success_embed(msg, "Your team logo has been updated successfully."))
+
+    @app_commands.command(name="admin-add-logo", description="Upload or replace a logo for any approved team (Admin only).")
+    @app_commands.autocomplete(team_name=team_autocomplete)
+    @is_admin()
+    async def admin_add_logo(self, interaction: discord.Interaction, team_name: str, logo: discord.Attachment):
+        await interaction.response.defer(ephemeral=True)
+
+        if not logo.content_type or not logo.content_type.startswith("image/"):
+            await interaction.followup.send(embed=error_embed("Invalid File", "Please upload a valid image file."))
+            return
+
+        async with connection.pool.acquire() as conn:
+            record = await conn.fetchrow("SELECT id, name, logo_url FROM teams WHERE name = $1", team_name)
+            if not record:
+                await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team_name}' does not exist."))
+                return
+
+            team_id = record['id']
+            was_replaced = record['logo_url'] is not None
+
+            # Re-upload to storage channel for a permanent URL
+            permanent_url = logo.url
+            if LOGO_STORAGE_CHANNEL_ID:
+                storage_channel = interaction.guild.get_channel(LOGO_STORAGE_CHANNEL_ID)
+                if storage_channel:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(logo.url) as resp:
+                                if resp.status == 200:
+                                    image_bytes = await resp.read()
+                        ext = logo.filename.rsplit(".", 1)[-1] if "." in logo.filename else "png"
+                        filename = f"{team_name.lower().replace(' ', '_')}_logo.{ext}"
+                        stored_msg = await storage_channel.send(
+                            file=discord.File(io.BytesIO(image_bytes), filename=filename)
+                        )
+                        permanent_url = stored_msg.attachments[0].url
+                    except Exception as e:
+                        log.warning(f"Failed to store logo in storage channel: {e}")
+
+            await conn.execute("UPDATE teams SET logo_url = $1 WHERE id = $2", permanent_url, team_id)
+
+            # Send Admin Log
+            if ADMIN_LOG_CHANNEL_ID:
+                log_channel = interaction.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+                if log_channel:
+                    action = "Logo Updated (Admin)" if was_replaced else "Team Logo Uploaded (Admin)"
+                    embed = admin_log_embed(action, f"Team: **{team_name}**\nSet by: {player_link(interaction.user.id, interaction.user.display_name)}")
+                    embed.set_image(url=permanent_url)
+                    view = AnnounceTeamView(self, team_name)
+                    await log_channel.send(embed=embed, view=view)
+
+        msg = "Logo Updated" if was_replaced else "Logo Added"
+        await interaction.followup.send(embed=success_embed(msg, f"Logo for **{team_name}** has been updated successfully."))
 
     @app_commands.command(name="approve-team", description="Approve a team and create their private channel (Admin only).")
     @app_commands.autocomplete(team_name=team_autocomplete)
@@ -442,7 +517,7 @@ class Teams(commands.Cog):
                 )
                 if in_team_records:
                     taken_users = ", ".join([
-                        f"{await fetch_player_link(self.bot, r['user_id'])} ({r['name']})"
+                        f"{await fetch_player_link(self.bot, r['user_id'], interaction.guild)} ({r['name']})"
                         for r in in_team_records
                     ])
                     await interaction.followup.send(embed=error_embed("Members Already in Teams", f"The following members are already in other approved teams: {taken_users}"))
@@ -626,7 +701,7 @@ class Teams(commands.Cog):
         for m in members:
             role_icon = "👑" if m['role'] == 'leader' else "⭐" if m['role'] == 'sudo' else "👤"
             role_text = "(Leader)" if m['role'] == 'leader' else "(Co-Leader)" if m['role'] == 'sudo' else ""
-            plink = await fetch_player_link(self.bot, m['user_id'])
+            plink = await fetch_player_link(self.bot, m['user_id'], interaction.guild)
             member_lines.append(f"{role_icon} {plink} {role_text}")
 
         embed = team_info_embed(team, member_lines, active_matches, completed_matches, completed_match_scores)

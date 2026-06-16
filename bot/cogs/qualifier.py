@@ -311,7 +311,7 @@ class Qualifier(commands.Cog):
         for m in members:
             icon = "👑" if m["role"] == "leader" else "⭐" if m["role"] == "sudo" else "👤"
             label = "(Leader)" if m["role"] == "leader" else "(Co-Leader)" if m["role"] == "sudo" else ""
-            plink = await fetch_player_link(self.bot, m['user_id'])
+            plink = await fetch_player_link(self.bot, m['user_id'], interaction.guild)
             member_lines.append(f"{icon} {plink} {label}")
         embed.add_field(
             name=f"Roster ({len(members)})",

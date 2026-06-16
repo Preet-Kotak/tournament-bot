@@ -2,8 +2,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
+import io
 from typing import Optional
 
+import aiohttp
 import bot.db.connection as connection
 from bot.utils.checks import is_admin, is_team_leader_or_admin, is_team_member_or_admin
 from bot.utils.embeds import (
@@ -14,7 +16,7 @@ from bot.utils.embeds import (
 )
 from bot.utils.constants import DISTRICT_NAMES, get_district_from_link
 from bot.utils.autocomplete import team_autocomplete, pending_or_scheduled_match_autocomplete
-from bot.config import ADMIN_IDS, ADMIN_LOG_CHANNEL_ID
+from bot.config import ADMIN_IDS, ADMIN_LOG_CHANNEL_ID, LOGO_STORAGE_CHANNEL_ID
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +53,30 @@ class ConfirmReplaceView(discord.ui.View):
 class Bases(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def _permanent_screenshot_url(self, guild: discord.Guild, attachment: discord.Attachment) -> str:
+        """Download an attachment and re-upload it to the storage channel for a permanent URL.
+        Falls back to the original URL if the storage channel is not configured or the upload fails."""
+        if not LOGO_STORAGE_CHANNEL_ID:
+            return attachment.url
+        storage_channel = guild.get_channel(LOGO_STORAGE_CHANNEL_ID)
+        if not storage_channel:
+            return attachment.url
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(attachment.url) as resp:
+                    if resp.status != 200:
+                        return attachment.url
+                    image_bytes = await resp.read()
+            ext = attachment.filename.rsplit(".", 1)[-1] if "." in attachment.filename else "png"
+            filename = f"base_screenshot.{ext}"
+            stored_msg = await storage_channel.send(
+                file=discord.File(io.BytesIO(image_bytes), filename=filename)
+            )
+            return stored_msg.attachments[0].url
+        except Exception as e:
+            log.warning(f"Failed to store base screenshot in storage channel: {e}")
+            return attachment.url
 
     async def save_base(
         self,
@@ -122,6 +148,9 @@ class Bases(commands.Cog):
             )
             return
 
+        # Re-upload screenshot to storage channel for a permanent URL
+        screenshot_url = await self._permanent_screenshot_url(interaction.guild, screenshot)
+
         async with connection.pool.acquire() as conn:
             match = await conn.fetchrow("SELECT * FROM matches WHERE id = $1", match_id)
             if not match:
@@ -158,7 +187,7 @@ class Bases(commands.Cog):
         district_name = DISTRICT_NAMES[district]
 
         if existing:
-            view = ConfirmReplaceView(self, match_id, team_id, district, link, screenshot.url, interaction.user.id)
+            view = ConfirmReplaceView(self, match_id, team_id, district, link, screenshot_url, interaction.user.id)
             await interaction.followup.send(
                 embed=error_embed(
                     "Base Already Submitted",
@@ -168,7 +197,7 @@ class Bases(commands.Cog):
                 ephemeral=True
             )
         else:
-            await self.save_base(interaction, match_id, team_id, district, link, screenshot.url)
+            await self.save_base(interaction, match_id, team_id, district, link, screenshot_url)
 
     @app_commands.command(name="view-bases", description="View submitted bases for a match (only you can see this).")
     @app_commands.describe(

@@ -25,6 +25,7 @@ TEAM_CHANNEL_CATEGORY_ID = int(os.getenv("TEAM_CHANNEL_CATEGORY_ID") or 0)
 MATCH_CATEGORY_ID = int(os.getenv("MATCH_CATEGORY_ID") or 0)
 ARCHIVE_CATEGORY_ID = int(os.getenv("ARCHIVE_CATEGORY_ID") or 0)
 MATCH_EMBED_CHANNEL_ID = int(os.getenv("MATCH_EMBED_CHANNEL_ID") or 0)
+LOGO_STORAGE_CHANNEL_ID = int(os.getenv("LOGO_STORAGE_CHANNEL_ID") or 0)
 # Keepalive and server configuration
 RENDER_URL = os.getenv("RENDER_URL", "")
 PORT = int(os.getenv("PORT", "8080"))
