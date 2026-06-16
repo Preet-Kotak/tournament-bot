@@ -107,6 +107,11 @@ async def setup_schema():
             submitted_at TIMESTAMP DEFAULT NOW(),
             UNIQUE(team_id, district)
         );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS honeypot_channels (
+            channel_id BIGINT PRIMARY KEY
+        );
         """
     ]
 
