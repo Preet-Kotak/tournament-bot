@@ -85,7 +85,7 @@ class Events(commands.Cog):
                 log_channel = message.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
                 if log_channel:
                     embed = admin_log_embed(
-                        "🍯 Honeypot Triggered",
+                        "🚨 Scam Detection Triggered",
                         f"**User:** {message.author.mention} (`{message.author}` | `{message.author.id}`)\n"
                         f"**Channel:** {message.channel.mention}\n"
                         f"**Action:** Softbanned (ban + instant unban)",
