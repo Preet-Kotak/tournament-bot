@@ -233,7 +233,7 @@ class Teams(commands.Cog):
     @app_commands.command(name="admin-add-logo", description="Upload or replace a logo for any approved team (Admin only).")
     @app_commands.autocomplete(team_name=team_autocomplete)
     @is_admin()
-    async def admin_add_logo(self, interaction: discord.Interaction, team_name: str, logo: discord.Attachment):
+    async def admin_add_logo(self, interaction: discord.Interaction, team_name: str, logo: discord.Attachment, announce_message_id: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
 
         if not logo.content_type or not logo.content_type.startswith("image/"):
@@ -282,6 +282,10 @@ class Teams(commands.Cog):
 
         msg = "Logo Updated" if was_replaced else "Logo Added"
         await interaction.followup.send(embed=success_embed(msg, f"Logo for **{team_name}** has been updated successfully."))
+
+        # Edit the announce message if provided
+        if announce_message_id:
+            await self._update_announce_message(interaction, team_name, announce_message_id)
 
     @app_commands.command(name="approve-team", description="Approve a team and create their private channel (Admin only).")
     @app_commands.autocomplete(team_name=team_autocomplete)
@@ -451,7 +455,8 @@ class Teams(commands.Cog):
         member2: Optional[discord.Member] = None,
         member3: Optional[discord.Member] = None,
         member4: Optional[discord.Member] = None,
-        member5: Optional[discord.Member] = None
+        member5: Optional[discord.Member] = None,
+        announce_message_id: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         
@@ -586,6 +591,59 @@ class Teams(commands.Cog):
                             pass
 
             await interaction.followup.send(embed=success_embed("Team Edited", f"Team '{final_name}' has been successfully updated."))
+
+        # Edit the announce message if provided
+        if announce_message_id:
+            await self._update_announce_message(interaction, final_name, announce_message_id)
+
+    async def _update_announce_message(self, interaction: discord.Interaction, team_name: str, message_id_str: str):
+        """Fetch the announce channel message and update its embed + member pings to reflect current team data."""
+        if not APPROVE_ANNOUNCE_CHANNEL_ID:
+            await interaction.followup.send(embed=error_embed("No Channel", "Announcement channel is not configured."), ephemeral=True)
+            return
+
+        announce_channel = interaction.guild.get_channel(APPROVE_ANNOUNCE_CHANNEL_ID)
+        if not announce_channel:
+            await interaction.followup.send(embed=error_embed("Not Found", "Could not find the announcement channel."), ephemeral=True)
+            return
+
+        try:
+            message_id = int(message_id_str)
+        except ValueError:
+            await interaction.followup.send(embed=error_embed("Invalid ID", "Message ID must be a number."), ephemeral=True)
+            return
+
+        try:
+            msg = await announce_channel.fetch_message(message_id)
+        except discord.NotFound:
+            await interaction.followup.send(embed=error_embed("Not Found", f"Could not find message `{message_id}` in the announcement channel."), ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.followup.send(embed=error_embed("Error", f"Failed to fetch message: {e}"), ephemeral=True)
+            return
+
+        # Only edit messages sent by this bot
+        if msg.author.id != interaction.guild.me.id:
+            await interaction.followup.send(embed=error_embed("Not My Message", "That message was not sent by this bot and cannot be edited."), ephemeral=True)
+            return
+
+        # Fetch fresh team data from DB
+        async with connection.pool.acquire() as conn:
+            team = await conn.fetchrow("SELECT * FROM teams WHERE name = $1", team_name)
+            if not team or not team['logo_url']:
+                await interaction.followup.send(embed=error_embed("Missing Data", f"Team '{team_name}' has no logo — cannot update the announcement."), ephemeral=True)
+                return
+            member_rows = await conn.fetch("SELECT user_id FROM team_members WHERE team_id = $1", team['id'])
+
+        member_tags = " ".join([f"<@{m['user_id']}>" for m in member_rows])
+        new_embed = team_announce_embed(team_name, team['logo_url'])
+
+        try:
+            await msg.edit(content=member_tags, embed=new_embed)
+            await interaction.followup.send(embed=success_embed("Announcement Updated", f"The announcement for **{team_name}** has been updated."), ephemeral=True)
+        except discord.HTTPException as e:
+            log.error(f"Failed to edit announce message: {e}")
+            await interaction.followup.send(embed=error_embed("Error", f"Failed to edit the message: {e}"), ephemeral=True)
 
     @app_commands.command(name="set-coleader", description="Give a team member co-leader permissions (Admin only).")
     @app_commands.autocomplete(team_name=team_autocomplete)
