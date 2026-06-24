@@ -13,7 +13,7 @@ import bot.db.connection as connection
 from bot.utils.checks import is_admin
 from bot.utils.embeds import success_embed, error_embed, upcoming_matches_embed
 from bot.utils.discord_utils import get_username
-from bot.utils.timezones import local_time_label, timezone_offset_to_minutes, utc_label
+from bot.utils.timezones import display_timezone_offset, local_time_label, timezone_offset_to_minutes
 from bot.utils.constants import DISTRICT_NAMES
 from bot.utils.autocomplete import (
     team_autocomplete,
@@ -142,61 +142,58 @@ def _text_size(draw: ImageDraw.ImageDraw, text: str, font) -> tuple[int, int]:
 
 def render_match_timezone_image(match_title: str, teams: list[tuple[str, list[dict]]]) -> io.BytesIO:
     gmt_hours = list(range(9, 22))
-    left = 36
-    top = 128
-    bottom = 38
-    row_h = 48
+    left = 40
+    top = 24
+    title_h = 72
     header_h = 42
-    team_h = 34
-    player_w = 270
-    tz_w = 118
-    hour_w = 78
+    row_h = 46
+    row_gap = 6
+    team_gap = 16
+    separator_h = 12
+    player_w = 260
+    tz_w = 110
+    hour_w = 70
     width = left * 2 + player_w + tz_w + hour_w * len(gmt_hours)
 
-    total_rows = sum(len(players) + 1 for _, players in teams)
-    height = top + header_h + (total_rows * row_h) + (len(teams) * team_h) + bottom
+    player_rows = sum(len(players) for _, players in teams)
+    height = top + title_h + 18 + header_h + (player_rows * (row_h + row_gap)) + max(0, len(teams) - 1) * (separator_h + team_gap) + 24
 
-    image = Image.new("RGB", (width, height), "#f5f7fb")
+    image = Image.new("RGB", (width, height), "#ffffff")
     draw = ImageDraw.Draw(image)
 
     title_font = _load_font(34, bold=True)
-    subtitle_font = _load_font(18)
     header_font = _load_font(18, bold=True)
     row_font = _load_font(18)
-    small_font = _load_font(15)
+    small_font = _load_font(14)
 
-    draw.rounded_rectangle((24, 20, width - 24, 104), radius=18, fill="#1f2937")
-    draw.text((48, 38), match_title, font=title_font, fill="#ffffff")
-    draw.text((48, 76), "GMT 09:00 to 21:00 - each row shows the stored UTC offset", font=subtitle_font, fill="#d1d5db")
+    title_y = top
+    title_w, title_h_px = _text_size(draw, match_title, title_font)
+    draw.text(((width - title_w) / 2, title_y), match_title, font=title_font, fill="#06b6d4")
+    underline_y = title_y + title_h_px + 10
+    draw.line((left, underline_y, width - left, underline_y), fill="#06b6d4", width=2)
 
     x0 = left
-    y = top
+    y = underline_y + 18
 
-    draw.rounded_rectangle((x0, y, width - left, y + header_h), radius=12, fill="#dde7f3")
-    draw.text((x0 + 14, y + 10), "Player", font=header_font, fill="#111827")
-    draw.text((x0 + player_w + 14, y + 10), "Timezone", font=header_font, fill="#111827")
+    draw.rounded_rectangle((x0, y, width - left, y + header_h), radius=10, fill="#e5e7eb")
+    draw.text((x0 + 14, y + 11), "Player", font=header_font, fill="#111827")
+    draw.text((x0 + player_w + 14, y + 11), "Timezone", font=header_font, fill="#111827")
     for idx, hour in enumerate(gmt_hours):
         cell_x = x0 + player_w + tz_w + (idx * hour_w)
-        label = f"GMT {hour:02d}:00"
+        label = f"{hour}:00"
         tw, th = _text_size(draw, label, header_font)
         draw.text((cell_x + (hour_w - tw) / 2, y + (header_h - th) / 2 - 1), label, font=header_font, fill="#111827")
 
-    y += header_h + 12
-    section_index = 0
+    y += header_h + 10
+    row_index = 0
 
-    for team_name, players in teams:
-        section_fill = "#cfd8e3" if section_index % 2 == 0 else "#d9e4db"
-        draw.rounded_rectangle((x0, y, width - left, y + team_h), radius=10, fill=section_fill)
-        draw.text((x0 + 14, y + 8), f"{team_name} ({len(players)})", font=header_font, fill="#111827")
-        y += team_h + 8
-        section_index += 1
-
-        for row_index, player in enumerate(players):
-            fill = "#ffffff" if row_index % 2 == 0 else "#f0f4f8"
+    for team_index, (_, players) in enumerate(teams):
+        for player in players:
+            fill = "#ffffff" if row_index % 2 == 0 else "#f3f4f6"
             draw.rounded_rectangle((x0, y, width - left, y + row_h), radius=10, fill=fill)
 
             name = player["display_name"]
-            tz_text = player.get("timezone_display") or "Not set"
+            tz_text = player.get("timezone_display") or "+0:00"
             offset_minutes = player.get("timezone_offset_minutes")
 
             draw.text((x0 + 14, y + 13), name, font=row_font, fill="#111827")
@@ -204,18 +201,17 @@ def render_match_timezone_image(match_title: str, teams: list[tuple[str, list[di
 
             for idx, hour in enumerate(gmt_hours):
                 cell_x = x0 + player_w + tz_w + (idx * hour_w)
-                if offset_minutes is None:
-                    label = "--"
-                else:
-                    label = local_time_label(hour, offset_minutes)
+                label = "--" if offset_minutes is None else local_time_label(hour, offset_minutes)
                 tw, th = _text_size(draw, label, row_font)
                 draw.text((cell_x + (hour_w - tw) / 2, y + (row_h - th) / 2 - 1), label, font=row_font, fill="#111827")
 
-            y += row_h + 6
+            y += row_h + row_gap
+            row_index += 1
 
-        y += 2
+        if team_index < len(teams) - 1:
+            y += team_gap
+            draw.line((x0, y - (team_gap // 2), width - left, y - (team_gap // 2)), fill="#06b6d4", width=2)
 
-    draw.text((left, height - 24), "Players without a stored timezone are shown as UTC+00:00.", font=small_font, fill="#4b5563")
 
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -485,7 +481,7 @@ class Matches(commands.Cog):
             current_players.append(
                 {
                     'display_name': await get_username(self.bot, row['user_id'], interaction.guild),
-                    'timezone_display': utc_label(offset_text),
+                    'timezone_display': display_timezone_offset(offset_text),
                     'timezone_offset_minutes': timezone_offset_to_minutes(offset_text),
                 }
             )
@@ -494,17 +490,12 @@ class Matches(commands.Cog):
             team_groups.append((current_team_name, current_players))
 
         image = render_match_timezone_image(
-            f"Match #{match['id']}: {match['team1_name']} vs {match['team2_name']}",
+            f"{match['team1_name']} vs {match['team2_name']}",
             team_groups,
         )
         file = discord.File(image, filename="match_timezones.png")
-        embed = success_embed(
-            "Match Timezones",
-            "GMT 09:00 to 21:00. Each row shows the converted local time for that player's UTC offset.",
-        )
-        embed.set_image(url="attachment://match_timezones.png")
 
-        await interaction.followup.send(embed=embed, file=file)
+        await interaction.followup.send(file=file)
 
     @app_commands.command(name="end-match", description="End a match and move it to archive (Admin only).")
     @app_commands.autocomplete(match_id=active_match_autocomplete)

@@ -8,7 +8,7 @@ from typing import Optional
 import aiohttp
 import bot.db.connection as connection
 from bot.utils.checks import is_admin, is_team_leader_or_admin
-from bot.utils.timezones import normalize_timezone_offset, utc_label
+from bot.utils.timezones import display_timezone_offset, normalize_timezone_offset
 from bot.utils.discord_utils import fetch_player_link, player_link
 from bot.utils.embeds import (
     success_embed, error_embed, admin_log_embed,
@@ -735,7 +735,7 @@ class Teams(commands.Cog):
         await interaction.followup.send(
             embed=success_embed(
                 "Timezone Set",
-                f"{player.mention} in **{target_team['name']}** is now set to **{utc_label(normalized_timezone)}**.",
+                f"{player.mention} in **{target_team['name']}** is now set to **{display_timezone_offset(normalized_timezone)}**.",
             )
         )
 

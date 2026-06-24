@@ -45,17 +45,20 @@ def utc_label(offset_text: str) -> str:
     return f"UTC{normalized}"
 
 
+def display_timezone_offset(offset_text: str) -> str:
+    normalized = normalize_timezone_offset(offset_text)
+    sign = normalized[0]
+    hours = int(normalized[1:3])
+    minutes = normalized[4:6]
+    return f"{sign}{hours}:{minutes}"
+
+
 def local_time_label(gmt_hour: int, offset_minutes: int) -> str:
     total_minutes = gmt_hour * 60 + offset_minutes
-    day_shift, minute_of_day = divmod(total_minutes, 24 * 60)
+    _, minute_of_day = divmod(total_minutes, 24 * 60)
     hour = minute_of_day // 60
     minute = minute_of_day % 60
-    label = f"{hour:02d}:{minute:02d}"
-    if day_shift > 0:
-        label += f"+{day_shift}"
-    elif day_shift < 0:
-        label += f"{day_shift}"
-    return label
+    return f"{hour:02d}:{minute:02d}"
 
 
 def offset_timedelta(offset_text: str) -> timedelta:
