@@ -2,12 +2,18 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
+import io
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
+
+from PIL import Image, ImageDraw, ImageFont
 
 import bot.db.connection as connection
 from bot.utils.checks import is_admin
 from bot.utils.embeds import success_embed, error_embed, upcoming_matches_embed
+from bot.utils.discord_utils import get_username
+from bot.utils.timezones import local_time_label, timezone_offset_to_minutes, utc_label
 from bot.utils.constants import DISTRICT_NAMES
 from bot.utils.autocomplete import (
     team_autocomplete,
@@ -113,6 +119,108 @@ async def refresh_match_embed(bot: discord.Client, match_id: int):
         log.error(f"Failed to refresh match embed: {e}")
 
 
+def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    candidates = [
+        r"C:\Windows\Fonts\segoeuib.ttf" if bold else r"C:\Windows\Fonts\segoeui.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf" if bold else r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\consolab.ttf" if bold else r"C:\Windows\Fonts\consola.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for candidate in candidates:
+        try:
+            if candidate and Path(candidate).exists():
+                return ImageFont.truetype(candidate, size=size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _text_size(draw: ImageDraw.ImageDraw, text: str, font) -> tuple[int, int]:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+
+def render_match_timezone_image(match_title: str, teams: list[tuple[str, list[dict]]]) -> io.BytesIO:
+    gmt_hours = list(range(9, 22))
+    left = 36
+    top = 128
+    bottom = 38
+    row_h = 48
+    header_h = 42
+    team_h = 34
+    player_w = 270
+    tz_w = 118
+    hour_w = 78
+    width = left * 2 + player_w + tz_w + hour_w * len(gmt_hours)
+
+    total_rows = sum(len(players) + 1 for _, players in teams)
+    height = top + header_h + (total_rows * row_h) + (len(teams) * team_h) + bottom
+
+    image = Image.new("RGB", (width, height), "#f5f7fb")
+    draw = ImageDraw.Draw(image)
+
+    title_font = _load_font(34, bold=True)
+    subtitle_font = _load_font(18)
+    header_font = _load_font(18, bold=True)
+    row_font = _load_font(18)
+    small_font = _load_font(15)
+
+    draw.rounded_rectangle((24, 20, width - 24, 104), radius=18, fill="#1f2937")
+    draw.text((48, 38), match_title, font=title_font, fill="#ffffff")
+    draw.text((48, 76), "GMT 09:00 to 21:00 - each row shows the stored UTC offset", font=subtitle_font, fill="#d1d5db")
+
+    x0 = left
+    y = top
+
+    draw.rounded_rectangle((x0, y, width - left, y + header_h), radius=12, fill="#dde7f3")
+    draw.text((x0 + 14, y + 10), "Player", font=header_font, fill="#111827")
+    draw.text((x0 + player_w + 14, y + 10), "Timezone", font=header_font, fill="#111827")
+    for idx, hour in enumerate(gmt_hours):
+        cell_x = x0 + player_w + tz_w + (idx * hour_w)
+        label = f"GMT {hour:02d}:00"
+        tw, th = _text_size(draw, label, header_font)
+        draw.text((cell_x + (hour_w - tw) / 2, y + (header_h - th) / 2 - 1), label, font=header_font, fill="#111827")
+
+    y += header_h + 12
+    section_index = 0
+
+    for team_name, players in teams:
+        section_fill = "#cfd8e3" if section_index % 2 == 0 else "#d9e4db"
+        draw.rounded_rectangle((x0, y, width - left, y + team_h), radius=10, fill=section_fill)
+        draw.text((x0 + 14, y + 8), f"{team_name} ({len(players)})", font=header_font, fill="#111827")
+        y += team_h + 8
+        section_index += 1
+
+        for row_index, player in enumerate(players):
+            fill = "#ffffff" if row_index % 2 == 0 else "#f0f4f8"
+            draw.rounded_rectangle((x0, y, width - left, y + row_h), radius=10, fill=fill)
+
+            name = player["display_name"]
+            tz_text = player.get("timezone_display") or "Not set"
+            offset_minutes = player.get("timezone_offset_minutes")
+
+            draw.text((x0 + 14, y + 13), name, font=row_font, fill="#111827")
+            draw.text((x0 + player_w + 14, y + 13), tz_text, font=row_font, fill="#111827")
+
+            for idx, hour in enumerate(gmt_hours):
+                cell_x = x0 + player_w + tz_w + (idx * hour_w)
+                if offset_minutes is None:
+                    label = "--"
+                else:
+                    label = local_time_label(hour, offset_minutes)
+                tw, th = _text_size(draw, label, row_font)
+                draw.text((cell_x + (hour_w - tw) / 2, y + (row_h - th) / 2 - 1), label, font=row_font, fill="#111827")
+
+            y += row_h + 6
+
+        y += 2
+
+    draw.text((left, height - 24), "Players without a stored timezone are shown as UTC+00:00.", font=small_font, fill="#4b5563")
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
 
 
 class Matches(commands.Cog):
@@ -302,6 +410,101 @@ class Matches(commands.Cog):
 
         await interaction.followup.send(embed=upcoming_matches_embed(rows))
 
+
+    @app_commands.command(name="match-timezones", description="Render the timezone layout for a match.")
+    @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete)
+    async def match_timezones(self, interaction: discord.Interaction, match_id: int):
+        await interaction.response.defer(ephemeral=False)
+
+        async with connection.pool.acquire() as conn:
+            match = await conn.fetchrow(
+                """
+                SELECT m.id, m.team1_id, m.team2_id, t1.name AS team1_name, t2.name AS team2_name
+                FROM matches m
+                JOIN teams t1 ON m.team1_id = t1.id
+                JOIN teams t2 ON m.team2_id = t2.id
+                WHERE m.id = $1
+                """,
+                match_id,
+            )
+            if not match:
+                await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
+                return
+
+            if interaction.user.id not in ADMIN_IDS:
+                allowed = await conn.fetchval(
+                    """
+                    SELECT EXISTS(
+                        SELECT 1
+                        FROM team_members
+                        WHERE user_id = $1 AND team_id IN ($2, $3)
+                    )
+                    """,
+                    interaction.user.id,
+                    match['team1_id'],
+                    match['team2_id'],
+                )
+                if not allowed:
+                    await interaction.followup.send(embed=error_embed("Not Allowed", "You are not on either team in this match."))
+                    return
+
+            member_rows = await conn.fetch(
+                """
+                SELECT tm.user_id, tm.role, tm.timezone_offset, t.id AS team_id, t.name AS team_name
+                FROM team_members tm
+                JOIN teams t ON tm.team_id = t.id
+                WHERE tm.team_id IN ($1, $2)
+                ORDER BY CASE tm.team_id WHEN $3 THEN 1 WHEN $4 THEN 2 ELSE 3 END,
+                         CASE tm.role
+                            WHEN 'leader' THEN 1
+                            WHEN 'sudo' THEN 2
+                            ELSE 3
+                         END,
+                         tm.user_id ASC
+                """,
+                match['team1_id'],
+                match['team2_id'],
+                match['team1_id'],
+                match['team2_id'],
+            )
+
+        team_groups = []
+        current_team_id = None
+        current_team_name = None
+        current_players = []
+
+        for row in member_rows:
+            if current_team_id != row['team_id']:
+                if current_team_name is not None:
+                    team_groups.append((current_team_name, current_players))
+                current_team_id = row['team_id']
+                current_team_name = row['team_name']
+                current_players = []
+
+            offset_text = row['timezone_offset'] or '+00:00'
+            current_players.append(
+                {
+                    'display_name': await get_username(self.bot, row['user_id'], interaction.guild),
+                    'timezone_display': utc_label(offset_text),
+                    'timezone_offset_minutes': timezone_offset_to_minutes(offset_text),
+                }
+            )
+
+        if current_team_name is not None:
+            team_groups.append((current_team_name, current_players))
+
+        image = render_match_timezone_image(
+            f"Match #{match['id']}: {match['team1_name']} vs {match['team2_name']}",
+            team_groups,
+        )
+        file = discord.File(image, filename="match_timezones.png")
+        embed = success_embed(
+            "Match Timezones",
+            "GMT 09:00 to 21:00. Each row shows the converted local time for that player's UTC offset.",
+        )
+        embed.set_image(url="attachment://match_timezones.png")
+
+        await interaction.followup.send(embed=embed, file=file)
 
     @app_commands.command(name="end-match", description="End a match and move it to archive (Admin only).")
     @app_commands.autocomplete(match_id=active_match_autocomplete)

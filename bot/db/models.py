@@ -26,7 +26,8 @@ async def setup_schema():
             id SERIAL PRIMARY KEY,
             team_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
             user_id BIGINT NOT NULL,
-            role TEXT CHECK (role IN ('leader', 'sudo', 'member'))
+            role TEXT CHECK (role IN ('leader', 'sudo', 'member')),
+            timezone_offset TEXT NOT NULL DEFAULT '+00:00'
         );
         """,
         """
@@ -126,6 +127,10 @@ async def setup_schema():
             "ALTER TABLE matches DROP CONSTRAINT IF EXISTS matches_status_check",
             "ALTER TABLE matches ADD CONSTRAINT matches_status_check CHECK (status IN ('pending', 'scheduled', 'active', 'completed'))",
             "ALTER TABLE matches ALTER COLUMN status SET DEFAULT 'pending'",
+            "ALTER TABLE team_members ADD COLUMN IF NOT EXISTS timezone_offset TEXT DEFAULT '+00:00'",
+            "UPDATE team_members SET timezone_offset = '+00:00' WHERE timezone_offset IS NULL",
+            "ALTER TABLE team_members ALTER COLUMN timezone_offset SET DEFAULT '+00:00'",
+            "ALTER TABLE team_members ALTER COLUMN timezone_offset SET NOT NULL",
         ]
         for m in migrations:
             try:

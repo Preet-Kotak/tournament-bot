@@ -8,6 +8,7 @@ from typing import Optional
 import aiohttp
 import bot.db.connection as connection
 from bot.utils.checks import is_admin, is_team_leader_or_admin
+from bot.utils.timezones import normalize_timezone_offset, utc_label
 from bot.utils.discord_utils import fetch_player_link, player_link
 from bot.utils.embeds import (
     success_embed, error_embed, admin_log_embed,
@@ -139,11 +140,11 @@ class Teams(commands.Cog):
                     member_records = []
                     for i, m in enumerate(members):
                         role = "leader" if i == 0 else "member"
-                        member_records.append((team_id, m.id, role))
+                        member_records.append((team_id, m.id, role, '+00:00'))
                         
                     await conn.copy_records_to_table(
                         'team_members',
-                        columns=['team_id', 'user_id', 'role'],
+                        columns=['team_id', 'user_id', 'role', 'timezone_offset'],
                         records=member_records
                     )
 
@@ -554,11 +555,11 @@ class Teams(commands.Cog):
                     member_records = []
                     for i, m in enumerate(members):
                         role = "leader" if i == 0 else "member"
-                        member_records.append((team_id, m.id, role))
+                        member_records.append((team_id, m.id, role, '+00:00'))
                         
                     await conn.copy_records_to_table(
                         'team_members',
-                        columns=['team_id', 'user_id', 'role'],
+                        columns=['team_id', 'user_id', 'role', 'timezone_offset'],
                         records=member_records
                     )
 
@@ -672,6 +673,71 @@ class Teams(commands.Cog):
                 
             await conn.execute("UPDATE team_members SET role = 'sudo' WHERE team_id = $1 AND user_id = $2", team['id'], member.id)
             await interaction.followup.send(embed=success_embed("Sudo Leader Set", f"{player_link(member.id, member.display_name)} has been granted sudo leader permissions for '{team_name}'."))
+
+    @app_commands.command(name="set-player-timezone", description="Set a player's timezone offset (Team Leader/Co-Leader or Admin only).")
+    @app_commands.describe(
+        player="The player whose timezone will be stored",
+        timezone="UTC offset like +05:30, -04:00, or +00:00",
+    )
+    @is_team_leader_or_admin()
+    async def set_player_timezone(self, interaction: discord.Interaction, player: discord.Member, timezone: str):
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            normalized_timezone = normalize_timezone_offset(timezone)
+        except ValueError as exc:
+            await interaction.followup.send(embed=error_embed("Invalid Timezone", str(exc)))
+            return
+
+        async with connection.pool.acquire() as conn:
+            target_team = await conn.fetchrow(
+                """
+                SELECT t.id, t.name
+                FROM team_members tm
+                JOIN teams t ON tm.team_id = t.id
+                WHERE tm.user_id = $1
+                ORDER BY tm.id ASC
+                LIMIT 1
+                """,
+                player.id,
+            )
+            if not target_team:
+                await interaction.followup.send(embed=error_embed("Not In Team", f"{player.mention} is not in a team."))
+                return
+
+            if interaction.user.id not in ADMIN_IDS:
+                caller_team = await conn.fetchrow(
+                    """
+                    SELECT t.id
+                    FROM team_members tm
+                    JOIN teams t ON tm.team_id = t.id
+                    WHERE tm.user_id = $1 AND tm.role IN ('leader', 'sudo')
+                    ORDER BY tm.id ASC
+                    LIMIT 1
+                    """,
+                    interaction.user.id,
+                )
+                if not caller_team:
+                    await interaction.followup.send(embed=error_embed("Not Allowed", "You must be a team leader or co-leader to set timezones for your team."))
+                    return
+
+                if caller_team['id'] != target_team['id']:
+                    await interaction.followup.send(embed=error_embed("Wrong Team", f"{player.mention} is not on your team."))
+                    return
+
+            await conn.execute(
+                "UPDATE team_members SET timezone_offset = $1 WHERE team_id = $2 AND user_id = $3",
+                normalized_timezone,
+                target_team['id'],
+                player.id,
+            )
+
+        await interaction.followup.send(
+            embed=success_embed(
+                "Timezone Set",
+                f"{player.mention} in **{target_team['name']}** is now set to **{utc_label(normalized_timezone)}**.",
+            )
+        )
 
     @app_commands.command(name="teams-list", description="View all approved teams.")
     async def teams_list(self, interaction: discord.Interaction):
