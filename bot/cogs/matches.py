@@ -168,9 +168,9 @@ def render_match_timezone_image(match_title: str, teams: list[tuple[str, list[di
 
     title_y = top
     title_w, title_h_px = _text_size(draw, match_title, title_font)
-    draw.text(((width - title_w) / 2, title_y), match_title, font=title_font, fill="#06b6d4")
+    draw.text(((width - title_w) / 2, title_y), match_title, font=title_font, fill="#000000")
     underline_y = title_y + title_h_px + 10
-    draw.line((left, underline_y, width - left, underline_y), fill="#06b6d4", width=2)
+    draw.line((left, underline_y, width - left, underline_y), fill="#000000", width=2)
 
     x0 = left
     y = underline_y + 18
@@ -210,7 +210,7 @@ def render_match_timezone_image(match_title: str, teams: list[tuple[str, list[di
 
         if team_index < len(teams) - 1:
             y += team_gap
-            draw.line((x0, y - (team_gap // 2), width - left, y - (team_gap // 2)), fill="#06b6d4", width=2)
+            draw.line((x0, y - (team_gap // 2), width - left, y - (team_gap // 2)), fill="#000000", width=2)
 
 
     buffer = io.BytesIO()
