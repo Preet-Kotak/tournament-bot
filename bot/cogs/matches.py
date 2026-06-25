@@ -204,12 +204,20 @@ def render_match_result_image(
     if background_bytes:
         try:
             logo = Image.open(io.BytesIO(background_bytes)).convert("RGBA")
-            max_logo_w = int(width * 0.88)
-            max_logo_h = int(height * 0.78)
-            logo.thumbnail((max_logo_w, max_logo_h), Image.Resampling.LANCZOS)
+            logo_ratio = logo.width / logo.height
+            canvas_ratio = width / height
+            if logo_ratio > canvas_ratio:
+                new_w = width
+                new_h = int(width / logo_ratio)
+            else:
+                new_h = height
+                new_w = int(height * logo_ratio)
+            logo = logo.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            logo_layer = Image.new("RGBA", (width, height), (255, 255, 255, 0))
             logo_x = (width - logo.width) // 2
-            logo_y = 108 + ((height - 160 - logo.height) // 2)
-            image.alpha_composite(logo, (logo_x, logo_y))
+            logo_y = (height - logo.height) // 2
+            logo_layer.alpha_composite(logo, (logo_x, logo_y))
+            image.alpha_composite(logo_layer)
         except Exception as e:
             log.warning(f"Failed to render result background image: {e}")
 
