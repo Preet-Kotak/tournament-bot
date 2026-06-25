@@ -296,7 +296,7 @@ def render_match_result_image(
     for row in rows:
         district_name = DISTRICT_NAMES[row["district"]]
         district_fit = _fit_font(draw, district_name, col1_w - 26, 25, bold=True, min_size=16)
-        _draw_centered_text(draw, (table_left, int(row_y), x1, int(row_y + row_h)), district_name, district_fit, "#cf4056", stroke_fill="#f4f4f4", stroke_width=2)
+        _draw_centered_text(draw, (table_left, int(row_y), x1, int(row_y + row_h)), district_name, district_fit, "#f7f7f7", stroke_fill="#05070b", stroke_width=3)
         _draw_centered_text(draw, (x1, int(row_y), x2, int(row_y + row_h)), _score_text(row[team1_id][0], row[team1_id][1]), score_font, "#f7f7f7", stroke_fill="#05070b", stroke_width=3)
         _draw_centered_text(draw, (x2, int(row_y), table_right, int(row_y + row_h)), _score_text(row[team2_id][0], row[team2_id][1]), score_font, "#f7f7f7", stroke_fill="#05070b", stroke_width=3)
         row_y += row_h
@@ -758,11 +758,7 @@ class Matches(commands.Cog):
         )
 
         result_file = discord.File(result_image, filename=f"match_{match_id}_result.png")
-        result_embed = discord.Embed(
-            title=f"Match #{match_id} Final Result",
-            description=f"Winner: **{winner_name}**" if winner_name != "Tie" else "Result: **Tie**",
-            color=discord.Color.teal(),
-        )
+        result_embed = discord.Embed(color=discord.Color.teal())
         result_embed.set_image(url=f"attachment://match_{match_id}_result.png")
         result_embed.set_footer(text="Anshu's Invitational 3")
 
