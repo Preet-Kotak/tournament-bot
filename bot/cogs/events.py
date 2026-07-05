@@ -2,10 +2,12 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
+import random
 
 import bot.db.connection as connection
 from bot.utils.checks import is_admin
 from bot.utils.embeds import admin_log_embed, FOOTER
+from bot.utils.constants import SCAM_BAIT_CHANNEL_NAMES
 from bot.config import WELCOME_CHANNEL_ID, ANNOUNCEMENT_CHANNEL_ID, SELF_ROLES_CHANNEL_ID, ADMIN_LOG_CHANNEL_ID
 
 log = logging.getLogger(__name__)
@@ -39,8 +41,8 @@ class Events(commands.Cog):
         self_roles_mention = f"<#{SELF_ROLES_CHANNEL_ID}>" if SELF_ROLES_CHANNEL_ID else "#self-roles"
 
         message = (
-            f"Hey {member.mention}, welcome to **Anshu's Invitational**! "
-            f"Have a look at {announcement_mention} for news about tournaments. "
+            f"Hey {member.mention}, welcome to **Anshu's Invitational**!/n "
+            f"Have a look at {announcement_mention} for news about tournaments./n "
             f"Grab some self roles in {self_roles_mention}!"
         )
 
@@ -49,7 +51,7 @@ class Events(commands.Cog):
         except discord.HTTPException as e:
             log.error(f"Failed to send welcome message: {e}")
 
-    # ── Honeypot trap ─────────────────────────────────────────────────────────
+    # ── Scam detect trap ─────────────────────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -66,50 +68,63 @@ class Events(commands.Cog):
         if member and member.guild_permissions.administrator:
             return
 
-        log.info(f"Honeypot triggered by {message.author} ({message.author.id}) in #{message.channel.name}")
+        log.info(f"Scam detection triggered by {message.author} ({message.author.id}) in #{message.channel.name}")
+
+        # Track whether ban succeeded
+        ban_successful = False
 
         try:
-            # Softban: ban (deletes messages) then immediately unban
+            # Ban permanently (deletes their messages from the past day)
             await message.guild.ban(
                 message.author,
-                reason="Honeypot channel triggered — softban",
-                delete_message_days=1,
+                reason="Scam detection channel triggered — permanent ban",
+                delete_message_seconds=86400,
             )
-            await message.guild.unban(
-                message.author,
-                reason="Honeypot softban — automatic unban",
-            )
+            ban_successful = True
+            log.info(f"Successfully banned {message.author}")
 
-            # Log to admin channel
-            if ADMIN_LOG_CHANNEL_ID:
-                log_channel = message.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
-                if log_channel:
-                    embed = admin_log_embed(
-                        "🚨 Scam Detection Triggered",
-                        f"**User:** {message.author.mention} (`{message.author}` | `{message.author.id}`)\n"
-                        f"**Channel:** {message.channel.mention}\n"
-                        f"**Action:** Softbanned (ban + instant unban)",
-                        color=discord.Color.red(),
-                    )
-                    embed.set_thumbnail(url=message.author.display_avatar.url)
-                    await log_channel.send(embed=embed)
+            # Rename channel to a random bait name
+            try:
+                new_name = random.choice(SCAM_BAIT_CHANNEL_NAMES)
+                await message.channel.edit(name=new_name)
+                log.info(f"Renamed scam detection channel to '{new_name}'")
+            except discord.HTTPException as e:
+                log.warning(f"Failed to rename scam detection channel: {e}")
 
-        except discord.Forbidden:
-            log.warning(f"Missing permissions to softban {message.author}.")
+        except discord.Forbidden as e:
+            log.error(f"Permission denied to ban {message.author}: {e}. Check bot role hierarchy and permissions.")
         except discord.HTTPException as e:
-            log.error(f"Error softbanning {message.author}: {e}")
+            log.error(f"HTTP error while banning {message.author}: {e}")
+
+        # Log to admin channel regardless of ban success
+        if ADMIN_LOG_CHANNEL_ID:
+            log_channel = message.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+            if log_channel:
+                status = "Permanently banned" if ban_successful else "⚠️ **Ban failed** (check permissions/role hierarchy)"
+                embed = admin_log_embed(
+                    "🚨 Scam Detection Triggered",
+                    f"**User:** {message.author.mention} (`{message.author}` | `{message.author.id}`)\n"
+                    f"**Channel:** {message.channel.mention}\n"
+                    f"**Action:** {status}",
+                    color=discord.Color.red() if ban_successful else discord.Color.orange(),
+                )
+                embed.set_thumbnail(url=message.author.display_avatar.url)
+                await log_channel.send(embed=embed)
 
     # ── /create-anti-bot-channel ──────────────────────────────────────────────
 
     @app_commands.command(
         name="create-anti-bot-channel",
-        description="Create a honeypot channel that softbans anyone who sends a message (Admin only)."
+        description="Create a scam detection channel that bans anyone who sends a message (Admin only)."
     )
     @is_admin()
-    async def create_anti_bot_channel(self, interaction: discord.Interaction, channel_name: str):
+    async def create_anti_bot_channel(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
         guild = interaction.guild
+
+        # Pick a random bait name
+        channel_name = random.choice(SCAM_BAIT_CHANNEL_NAMES)
 
         # Permissions: everyone can view and send (so bots/users stumble in),
         # but the bot needs to be able to manage it
@@ -155,7 +170,7 @@ class Events(commands.Cog):
             self._honeypot_channel_ids.add(channel.id)
 
             await interaction.followup.send(
-                f"✅ Honeypot channel {channel.mention} created and registered.",
+                f"✅ Scam detection channel {channel.mention} created as `{channel_name}`.",
                 ephemeral=True,
             )
 
@@ -164,7 +179,7 @@ class Events(commands.Cog):
                 "❌ I don't have permission to create channels.", ephemeral=True
             )
         except discord.HTTPException as e:
-            log.error(f"Error creating honeypot channel: {e}")
+            log.error(f"Error creating Scam detect channel: {e}")
             await interaction.followup.send(
                 "❌ Something went wrong while creating the channel.", ephemeral=True
             )
