@@ -397,6 +397,74 @@ class Teams(commands.Cog):
 
         await interaction.followup.send(embed=success_embed("Announced", f"Team '{team_name}' has been announced."))
 
+    @app_commands.command(name="refresh-all-announcements", description="Refresh logo URLs in all team announcement embeds (Admin only).")
+    @is_admin()
+    async def refresh_all_announcements(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        if not APPROVE_ANNOUNCE_CHANNEL_ID:
+            await interaction.followup.send(embed=error_embed("No Channel", "Announcement channel is not configured."))
+            return
+
+        announce_channel = interaction.guild.get_channel(APPROVE_ANNOUNCE_CHANNEL_ID)
+        if not announce_channel:
+            await interaction.followup.send(embed=error_embed("Not Found", "Could not find the announcement channel."))
+            return
+
+        async with connection.pool.acquire() as conn:
+            # Count approved teams to know how many messages to fetch
+            team_count = await conn.fetchval("SELECT COUNT(*) FROM teams WHERE is_approved = TRUE")
+            if team_count == 0:
+                await interaction.followup.send(embed=error_embed("No Teams", "No approved teams found."))
+                return
+
+            # Fetch recent messages (limit to team_count or 100, whichever is less)
+            limit = min(team_count, 100)
+            try:
+                messages = [msg async for msg in announce_channel.history(limit=limit)]
+            except discord.HTTPException as e:
+                await interaction.followup.send(embed=error_embed("Error", f"Failed to fetch messages: {e}"))
+                return
+
+            # Filter to messages sent by the bot with embeds
+            bot_messages = [msg for msg in messages if msg.author.id == interaction.guild.me.id and msg.embeds]
+
+            updated_count = 0
+            failed = []
+
+            for msg in bot_messages:
+                embed = msg.embeds[0]
+                # Extract team name from title: "Welcome {team_name} to Anshu's Invitational 3!"
+                if not embed.title or not embed.title.startswith("Welcome "):
+                    continue
+                try:
+                    team_name = embed.title.replace("Welcome ", "").replace(" to Anshu's Invitational 3!", "")
+                except:
+                    continue
+
+                # Fetch logo URL from DB
+                logo_url = await conn.fetchval("SELECT logo_url FROM teams WHERE name = $1 AND is_approved = TRUE", team_name)
+                if not logo_url:
+                    failed.append(f"{team_name} (no logo in DB)")
+                    continue
+
+                # Update embed image URL (keep everything else the same)
+                new_embed = discord.Embed.from_dict(embed.to_dict())
+                new_embed.set_image(url=logo_url)
+
+                try:
+                    await msg.edit(embed=new_embed)
+                    updated_count += 1
+                except discord.HTTPException as e:
+                    failed.append(f"{team_name} ({e})")
+                    log.error(f"Failed to update announcement for {team_name}: {e}")
+
+        result_msg = f"✅ Refreshed {updated_count} logo(s)."
+        if failed:
+            result_msg += f"\n\n❌ Failed:\n" + "\n".join([f"• {f}" for f in failed])
+
+        await interaction.followup.send(embed=success_embed("Logos Refreshed", result_msg))
+
     @app_commands.command(name="delete-team", description="Delete a team and its roles completely (Admin only).")
     @app_commands.autocomplete(team_name=team_autocomplete)
     @is_admin()
