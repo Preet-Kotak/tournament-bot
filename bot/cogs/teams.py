@@ -419,7 +419,7 @@ class Teams(commands.Cog):
                 return
 
             # Fetch recent messages (limit to team_count or 100, whichever is less)
-            limit = min(team_count, 100)
+            limit = min(2*team_count, 100)
             try:
                 messages = [msg async for msg in announce_channel.history(limit=limit)]
             except discord.HTTPException as e:
