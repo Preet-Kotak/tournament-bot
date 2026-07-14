@@ -20,11 +20,11 @@ DISTRICT_NUMBERS: dict[str, int] = {name.lower(): num for num, name in DISTRICT_
 # Fill in the 6 district names used in the qualifier round.
 QUALIFIER_DISTRICTS: list[str] = [
     "Capital Peak",
-    "Barbarian Camp",
     "Wizard Valley",
+    "Barbarian Camp",
     "Balloon Lagoon",
-    "Builder's Workshop",
     "Dragon Cliffs",
+    "Goblin Mines",
 ]
 
 

@@ -12,7 +12,47 @@ from bot.utils.discord_utils import fetch_player_link
 
 log = logging.getLogger(__name__)
 
+
+# ── Dynamic Admin Check ───────────────────────────────────────────────────────
+
+async def is_qualifier_public_enabled() -> bool:
+    """Check if qualifier public commands are enabled."""
+    async with connection.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT value FROM settings WHERE key = 'qualifier_public_commands'"
+        )
+        return row["value"].lower() == "true" if row else False
+
+
+def qualifier_access_check():
+    """Decorator that checks if command should be admin-only or public."""
+    async def predicate(interaction: discord.Interaction) -> bool:
+        # Check if public commands are enabled
+        public_enabled = await is_qualifier_public_enabled()
+        
+        if public_enabled:
+            # Public mode - allow everyone
+            return True
+        else:
+            # Admin-only mode - check admin status
+            return await is_admin().predicate(interaction)
+    
+    return app_commands.check(predicate)
+
 RANK_EMOJIS = ["🥇", "🥈", "🥉"]
+
+
+# ── Autocomplete for Toggle Command ───────────────────────────────────────────
+
+async def bool_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice]:
+    """Autocomplete for true/false values."""
+    options = [
+        app_commands.Choice(name="true", value="true"),
+        app_commands.Choice(name="false", value="false"),
+    ]
+    if not current:
+        return options
+    return [opt for opt in options if current.lower() in opt.name.lower()]
 
 
 def _rank(pos: int) -> str:
@@ -225,8 +265,8 @@ class Qualifier(commands.Cog):
 
     # ── /qualifier-lb ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="qualifier-lb", description="Show the qualifier leaderboard (Admin only).")
-    @is_admin()
+    @app_commands.command(name="qualifier-lb", description="Show the qualifier leaderboard.")
+    @qualifier_access_check()
     async def qualifier_lb(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
 
@@ -265,7 +305,7 @@ class Qualifier(commands.Cog):
     @app_commands.command(name="qualifier-team-info", description="Show a team's qualifier scores and roster.")
     @app_commands.autocomplete(team=qualifier_team_autocomplete)
     @app_commands.describe(team="The team to view")
-    @is_admin()
+    @qualifier_access_check()
     async def qualifier_team_info(self, interaction: discord.Interaction, team: str):
         await interaction.response.defer(ephemeral=False)
 
@@ -342,7 +382,7 @@ class Qualifier(commands.Cog):
     @app_commands.command(name="qualifier-district-lb", description="Show team rankings for a qualifier district.")
     @app_commands.autocomplete(district=qualifier_district_autocomplete)
     @app_commands.describe(district="The qualifier district to view")
-    @is_admin()
+    @qualifier_access_check()
     async def qualifier_district_lb(self, interaction: discord.Interaction, district: str):
         await interaction.response.defer(ephemeral=False)
 
@@ -385,6 +425,50 @@ class Qualifier(commands.Cog):
 
         embed = success_embed(f"📊 {district} — Qualifier Rankings", description)
         await interaction.followup.send(embed=embed)
+
+    # ── /qualifier-toggle-public ──────────────────────────────────────────────
+
+    @app_commands.command(
+        name="qualifier-toggle-public",
+        description="Toggle qualifier commands between admin-only and public access (Admin only)."
+    )
+    @app_commands.autocomplete(enabled=bool_autocomplete)
+    @app_commands.describe(enabled="true to make commands public, false to make them admin-only")
+    @is_admin()
+    async def qualifier_toggle_public(self, interaction: discord.Interaction, enabled: str):
+        # Validate input
+        enabled_lower = enabled.lower()
+        if enabled_lower not in ["true", "false"]:
+            await interaction.response.send_message(
+                embed=error_embed(
+                    "Invalid Input",
+                    "Please provide either `true` or `false`."
+                ),
+                ephemeral=True,
+            )
+            return
+
+        async with connection.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO settings (key, value)
+                VALUES ('qualifier_public_commands', $1)
+                ON CONFLICT (key)
+                DO UPDATE SET value = $1
+                """,
+                enabled_lower,
+            )
+
+        status = "**public**" if enabled_lower == "true" else "**admin-only**"
+        commands_list = "`/qualifier-lb`, `/qualifier-team-info`, `/qualifier-district-lb`"
+        
+        await interaction.response.send_message(
+            embed=success_embed(
+                "Qualifier Access Updated",
+                f"Qualifier commands ({commands_list}) are now {status}."
+            ),
+            ephemeral=True,
+        )
 
 
 async def setup(bot: commands.Bot):

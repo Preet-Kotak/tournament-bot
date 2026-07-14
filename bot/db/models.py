@@ -113,6 +113,12 @@ async def setup_schema():
         CREATE TABLE IF NOT EXISTS honeypot_channels (
             channel_id BIGINT PRIMARY KEY
         );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         """
     ]
 

@@ -140,8 +140,8 @@ bot/
 ### **Statistics** (9 commands)
 `/district-stat-team`, `/district-stat-player`, `/tournament-stat`, `/player-stat-log`, `/player-stat`, `/team-stat-log`, `/team-stat`, `/match-stat`, `/relative-lb-player`
 
-### **Qualifier** (4 commands)
-`/qualifier-submit`, `/qualifier-lb`, `/qualifier-team-info`, `/qualifier-district-lb`
+### **Qualifier** (5 commands)
+`/qualifier-submit`, `/qualifier-lb`, `/qualifier-team-info`, `/qualifier-district-lb`, `/qualifier-toggle-public`
 
 ### **Moderation** (2 commands)
 `/create-anti-bot-channel`, `/help`
