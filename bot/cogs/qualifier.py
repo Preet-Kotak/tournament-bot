@@ -27,6 +27,9 @@ async def is_qualifier_public_enabled() -> bool:
 def qualifier_access_check():
     """Decorator that checks if command should be admin-only or public."""
     async def predicate(interaction: discord.Interaction) -> bool:
+        from bot.config import ADMIN_IDS
+        from bot.utils.checks import NotAdmin
+        
         # Check if public commands are enabled
         public_enabled = await is_qualifier_public_enabled()
         
@@ -35,7 +38,9 @@ def qualifier_access_check():
             return True
         else:
             # Admin-only mode - check admin status
-            return await is_admin().predicate(interaction)
+            if interaction.user.id in ADMIN_IDS:
+                return True
+            raise NotAdmin()
     
     return app_commands.check(predicate)
 
