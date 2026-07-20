@@ -16,6 +16,7 @@ from bot.utils.checks import is_admin
 from bot.utils.embeds import success_embed, error_embed, upcoming_matches_embed
 from bot.utils.discord_utils import get_username
 from bot.utils.timezones import display_timezone_offset, local_time_label, timezone_offset_to_minutes
+from bot.utils.text_formatting import to_sans_serif_bold
 from bot.utils.constants import DISTRICT_NAMES
 from bot.utils.autocomplete import (
     team_autocomplete,
@@ -346,10 +347,10 @@ def render_match_timezone_image(match_title: str, teams: list[tuple[str, list[di
     image = Image.new("RGB", (width, height), "#ffffff")
     draw = ImageDraw.Draw(image)
 
-    title_font = _load_font(34, bold=True)
-    header_font = _load_font(18, bold=True)
-    row_font = _load_font(18)
-    small_font = _load_font(14)
+    title_font = _load_font(42, bold=True)
+    header_font = _load_font(22, bold=True)
+    row_font = _load_font(22)
+    small_font = _load_font(18)
 
     title_y = top
     title_w, title_h_px = _text_size(draw, match_title, title_font)
@@ -452,16 +453,28 @@ class Matches(commands.Cog):
                 guild.default_role: discord.PermissionOverwrite(read_messages=False),
                 guild.me: discord.PermissionOverwrite(read_messages=True),
             }
+            team_permissions = discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=True,
+                read_message_history=True,
+                add_reactions=True,
+                attach_files=True,
+                use_application_commands=True,
+                embed_links=True,
+                external_emojis=True,
+                external_stickers=True
+            )
             if t1_role:
-                overwrites[t1_role] = discord.PermissionOverwrite(read_messages=True)
+                overwrites[t1_role] = team_permissions
             if t2_role:
-                overwrites[t2_role] = discord.PermissionOverwrite(read_messages=True)
+                overwrites[t2_role] = team_permissions
             for admin_id in ADMIN_IDS:
                 member = guild.get_member(admin_id)
                 if member:
                     overwrites[member] = discord.PermissionOverwrite(read_messages=True)
 
-            base_name = f"{team1.lower().replace(' ', '_')}_vs_{team2.lower().replace(' ', '_')}"
+            # Use sans-serif bold Unicode with VS emoji
+            base_name = f"{to_sans_serif_bold(team1.replace(' ', '-'))}-🆚-{to_sans_serif_bold(team2.replace(' ', '-'))}"
             channel_name = base_name if match_number == 1 else f"{base_name}-{match_number}"
 
             try:

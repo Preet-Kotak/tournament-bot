@@ -10,6 +10,7 @@ import bot.db.connection as connection
 from bot.utils.checks import is_admin, is_team_leader_or_admin
 from bot.utils.timezones import display_timezone_offset, normalize_timezone_offset
 from bot.utils.discord_utils import fetch_player_link, player_link
+from bot.utils.text_formatting import to_sans_serif_bold
 from bot.utils.embeds import (
     success_embed, error_embed, admin_log_embed,
     account_info_embed, team_announce_embed, teams_list_embed, team_info_embed,
@@ -330,8 +331,10 @@ class Teams(commands.Cog):
                                                           external_emojis=True,
                                                           external_stickers=True)
                     
+                # Use sans-serif bold Unicode characters for channel name
+                channel_name = to_sans_serif_bold(team_name.replace(' ', '-'))
                 channel = await guild.create_text_channel(
-                    name=f"{team_name.lower().replace(' ', '-')}",
+                    name=channel_name,
                     category=category,
                     overwrites=overwrites
                 )
@@ -559,7 +562,7 @@ class Teams(commands.Cog):
                     channel = guild.get_channel(team['channel_id'])
                     if channel:
                         try:
-                            await channel.edit(name=new_name.lower().replace(' ', '-'))
+                            await channel.edit(name=to_sans_serif_bold(new_name.replace(' ', '-')))
                         except discord.HTTPException:
                             pass
                         

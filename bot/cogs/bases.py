@@ -130,9 +130,15 @@ class Bases(commands.Cog):
     # ── Commands ──────────────────────────────────────────────────────────────
 
     @app_commands.command(name="submit-base", description="Submit a base for your team (Team Leader only).")
-    @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete)
+    @app_commands.describe(
+        match_id="The match ID to submit the base for",
+        link="The base link (district will be auto-detected)",
+        screenshot="Screenshot of your base",
+        team="(Admin only) Select a specific team to submit for"
+    )
+    @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete, team=team_autocomplete)
     @is_team_leader_or_admin()
-    async def submit_base(self, interaction: discord.Interaction, match_id: int, link: str, screenshot: discord.Attachment):
+    async def submit_base(self, interaction: discord.Interaction, match_id: int, link: str, screenshot: discord.Attachment, team: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
 
         if not screenshot.content_type or not screenshot.content_type.startswith("image/"):
@@ -151,6 +157,8 @@ class Bases(commands.Cog):
         # Re-upload screenshot to storage channel for a permanent URL
         screenshot_url = await self._permanent_screenshot_url(interaction.guild, screenshot)
 
+        is_admin_user = interaction.user.id in ADMIN_IDS
+
         async with connection.pool.acquire() as conn:
             match = await conn.fetchrow("SELECT * FROM matches WHERE id = $1", match_id)
             if not match:
@@ -164,19 +172,32 @@ class Bases(commands.Cog):
                 )
                 return
 
-            team_record = await conn.fetchrow(
-                """SELECT t.id FROM teams t
-                JOIN team_members tm ON t.id = tm.team_id
-                WHERE tm.user_id = $1 AND tm.role IN ('leader', 'sudo')
-                AND t.id IN ($2, $3)""",
-                interaction.user.id, match["team1_id"], match["team2_id"]
-            )
-            if not team_record:
-                await interaction.followup.send(
-                    embed=error_embed("Not Eligible", "You are not a leader of any team in this match."),
-                    ephemeral=True
+            # Admin can specify team, otherwise find user's team
+            if is_admin_user and team:
+                team_record = await conn.fetchrow("SELECT id FROM teams WHERE name = $1", team)
+                if not team_record:
+                    await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team}' not found."), ephemeral=True)
+                    return
+                if team_record["id"] not in (match["team1_id"], match["team2_id"]):
+                    await interaction.followup.send(
+                        embed=error_embed("Not Eligible", f"Team **{team}** is not part of Match #{match_id}."),
+                        ephemeral=True
+                    )
+                    return
+            else:
+                team_record = await conn.fetchrow(
+                    """SELECT t.id FROM teams t
+                    JOIN team_members tm ON t.id = tm.team_id
+                    WHERE tm.user_id = $1 AND tm.role IN ('leader', 'sudo')
+                    AND t.id IN ($2, $3)""",
+                    interaction.user.id, match["team1_id"], match["team2_id"]
                 )
-                return
+                if not team_record:
+                    await interaction.followup.send(
+                        embed=error_embed("Not Eligible", "You are not a leader of any team in this match."),
+                        ephemeral=True
+                    )
+                    return
             team_id = team_record["id"]
 
             existing = await conn.fetchrow(
