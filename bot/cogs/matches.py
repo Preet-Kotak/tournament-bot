@@ -123,6 +123,15 @@ async def refresh_match_embed(bot: discord.Client, match_id: int):
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    # Try bundled fonts first (always available)
+    bundled_path = Path(__file__).parent.parent / "utils" / ("Roboto-Bold.ttf" if bold else "Roboto-Regular.ttf")
+    if bundled_path.exists():
+        try:
+            return ImageFont.truetype(str(bundled_path), size=size)
+        except Exception:
+            pass
+    
+    # Fallback to system fonts
     candidates = [
         r"C:\Windows\Fonts\segoeuib.ttf" if bold else r"C:\Windows\Fonts\segoeui.ttf",
         r"C:\Windows\Fonts\arialbd.ttf" if bold else r"C:\Windows\Fonts\arial.ttf",
