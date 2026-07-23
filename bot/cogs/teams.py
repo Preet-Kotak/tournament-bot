@@ -721,29 +721,39 @@ class Teams(commands.Cog):
     @app_commands.autocomplete(team_name=team_autocomplete)
     @is_admin()
     async def set_sudo_leader(self, interaction: discord.Interaction, team_name: str, member: discord.Member):
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.errors.NotFound:
+            return  # Interaction expired
         
-        async with connection.pool.acquire() as conn:
-            team = await conn.fetchrow("SELECT id FROM teams WHERE name = $1", team_name)
-            if not team:
-                await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team_name}' does not exist."))
-                return
-                
-            record = await conn.fetchrow("SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2", team['id'], member.id)
-            if not record:
-                await interaction.followup.send(embed=error_embed("Not In Team", f"{player_link(member.id, member.display_name)} is not a member of '{team_name}'."))
-                return
-                
-            if record['role'] == 'leader':
-                await interaction.followup.send(embed=error_embed("Already Leader", f"{player_link(member.id, member.display_name)} is already the primary leader."))
-                return
-                
-            if record['role'] == 'sudo':
-                await interaction.followup.send(embed=error_embed("Already Sudo", f"{player_link(member.id, member.display_name)} is already a sudo leader."))
-                return
-                
-            await conn.execute("UPDATE team_members SET role = 'sudo' WHERE team_id = $1 AND user_id = $2", team['id'], member.id)
-            await interaction.followup.send(embed=success_embed("Sudo Leader Set", f"{player_link(member.id, member.display_name)} has been granted sudo leader permissions for '{team_name}'."))
+        try:
+            async with connection.pool.acquire() as conn:
+                team = await conn.fetchrow("SELECT id FROM teams WHERE name = $1", team_name)
+                if not team:
+                    await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team_name}' does not exist."))
+                    return
+                    
+                record = await conn.fetchrow("SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2", team['id'], member.id)
+                if not record:
+                    await interaction.followup.send(embed=error_embed("Not In Team", f"{player_link(member.id, member.display_name)} is not a member of '{team_name}'."))
+                    return
+                    
+                if record['role'] == 'leader':
+                    await interaction.followup.send(embed=error_embed("Already Leader", f"{player_link(member.id, member.display_name)} is already the primary leader."))
+                    return
+                    
+                if record['role'] == 'sudo':
+                    await interaction.followup.send(embed=error_embed("Already Sudo", f"{player_link(member.id, member.display_name)} is already a sudo leader."))
+                    return
+                    
+                await conn.execute("UPDATE team_members SET role = 'sudo' WHERE team_id = $1 AND user_id = $2", team['id'], member.id)
+                await interaction.followup.send(embed=success_embed("Sudo Leader Set", f"{player_link(member.id, member.display_name)} has been granted sudo leader permissions for '{team_name}'."))
+        except Exception as e:
+            log.error(f"Error in set-coleader command: {e}")
+            try:
+                await interaction.followup.send(embed=error_embed("Error", "An unexpected error occurred. Please try again."))
+            except:
+                pass
 
     @app_commands.command(name="set-player-timezone", description="Set a player's timezone offset (Team Leader/Co-Leader or Admin only).")
     @app_commands.describe(
