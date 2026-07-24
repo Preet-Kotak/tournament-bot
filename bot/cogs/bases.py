@@ -341,6 +341,10 @@ class Bases(commands.Cog):
                 await interaction.followup.send(embed=error_embed("Not Eligible", f"Team **{team}** is not part of Match #{match_id}."))
                 return
 
+            # Get both team names for the header
+            team1 = await conn.fetchrow("SELECT name FROM teams WHERE id = $1", match["team1_id"])
+            team2 = await conn.fetchrow("SELECT name FROM teams WHERE id = $1", match["team2_id"])
+            
             bases = await conn.fetch(
                 "SELECT district, screenshot_url FROM bases WHERE team_id = $1 AND match_id = $2 ORDER BY district",
                 team_record["id"], match_id
@@ -350,10 +354,27 @@ class Bases(commands.Cog):
             await interaction.followup.send(embed=error_embed("No Bases", f"No bases submitted for **{team_record['name']}** in Match #{match_id}."))
             return
 
-        await interaction.followup.send(embed=send_bases_summary_embed(team_record['name'], match_id))
+        # Download all screenshots and prepare them as discord.File objects
+        files = []
+        async with aiohttp.ClientSession() as session:
+            for b in bases:
+                try:
+                    async with session.get(b["screenshot_url"]) as resp:
+                        if resp.status == 200:
+                            image_bytes = await resp.read()
+                            district_name = DISTRICT_NAMES[b["district"]].replace(" ", "_")
+                            filename = f"{district_name}.png"
+                            files.append(discord.File(io.BytesIO(image_bytes), filename=filename))
+                except Exception as e:
+                    log.warning(f"Failed to download screenshot for district {b['district']}: {e}")
 
-        for b in bases:
-            await interaction.followup.send(embed=send_bases_card_embed(DISTRICT_NAMES[b["district"]], b["screenshot_url"]))
+        if not files:
+            await interaction.followup.send(embed=error_embed("Error", "Failed to download base screenshots."))
+            return
+
+        # Send a single message with all images
+        message_text = f"**{team1['name']} vs {team2['name']}\n{team_record['name']} Bases**"
+        await interaction.followup.send(content=message_text, files=files)
 
     @app_commands.command(name="remind-bases", description="Ping a team about missing base submissions (Admin only).")
     @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete, team=team_autocomplete)
