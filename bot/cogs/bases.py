@@ -415,7 +415,21 @@ class Bases(commands.Cog):
     @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete)
     @is_team_member_or_admin()
     async def base_status(self, interaction: discord.Interaction, match_id: Optional[int] = None):
-        await interaction.response.defer(ephemeral=True)
+        # Check if interaction is already responded to (shouldn't happen, but defensive)
+        if interaction.response.is_done():
+            return
+        
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.errors.NotFound:
+            # Interaction token expired - log and exit gracefully
+            log.warning(f"Interaction token expired for base-status command (User: {interaction.user.id})")
+            return
+        except discord.errors.HTTPException as e:
+            if e.code == 40060:  # Already acknowledged
+                log.warning(f"Interaction already acknowledged for base-status command (User: {interaction.user.id})")
+                return
+            raise
 
         is_admin_user = interaction.user.id in ADMIN_IDS
 
