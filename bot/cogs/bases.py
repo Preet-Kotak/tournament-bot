@@ -60,44 +60,58 @@ class Bases(commands.Cog):
         else:
             log.info("Cloudinary not configured - using Discord storage channel fallback")
 
-    async def _permanent_screenshot_url(self, guild: discord.Guild, attachment: discord.Attachment) -> str:
-        """Upload screenshot to Cloudinary for permanent storage. Falls back to Discord storage if Cloudinary fails."""
+    async def _permanent_screenshot_url(self, guild: discord.Guild, attachment: discord.Attachment, team_name: str = None, district: int = None) -> str:
+        """Upload screenshot to Cloudinary for permanent storage AND post to Discord storage channel for visibility."""
+        
+        cloudinary_url = None
         
         # Try Cloudinary first if configured
         if self.cloudinary_enabled:
             cloudinary_url = await upload_to_cloudinary(attachment.url, folder="tournament_bases")
             if cloudinary_url:
                 log.info(f"Successfully uploaded screenshot to Cloudinary")
-                return cloudinary_url
             else:
                 log.warning("Cloudinary upload failed, falling back to Discord storage")
         
-        # Fallback to Discord storage channel if Cloudinary not available or failed
-        if not LOGO_STORAGE_CHANNEL_ID:
-            log.warning("No storage channel configured, using original attachment URL")
-            return attachment.url
-            
-        storage_channel = guild.get_channel(LOGO_STORAGE_CHANNEL_ID)
-        if not storage_channel:
-            log.warning("Storage channel not found, using original attachment URL")
-            return attachment.url
-            
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(attachment.url) as resp:
-                    if resp.status != 200:
-                        return attachment.url
-                    image_bytes = await resp.read()
-            ext = attachment.filename.rsplit(".", 1)[-1] if "." in attachment.filename else "png"
-            filename = f"base_screenshot.{ext}"
-            stored_msg = await storage_channel.send(
-                file=discord.File(io.BytesIO(image_bytes), filename=filename)
-            )
-            log.info("Uploaded screenshot to Discord storage channel (fallback)")
-            return stored_msg.attachments[0].url
-        except Exception as e:
-            log.warning(f"Failed to store base screenshot in storage channel: {e}")
-            return attachment.url
+        # Also post to Discord storage channel for visibility (even if Cloudinary worked)
+        if LOGO_STORAGE_CHANNEL_ID:
+            storage_channel = guild.get_channel(LOGO_STORAGE_CHANNEL_ID)
+            if storage_channel:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(attachment.url) as resp:
+                            if resp.status == 200:
+                                image_bytes = await resp.read()
+                                ext = attachment.filename.rsplit(".", 1)[-1] if "." in attachment.filename else "png"
+                                filename = f"base_screenshot.{ext}"
+                                
+                                # Create a message with context
+                                district_name = DISTRICT_NAMES[district] if district is not None else "Unknown"
+                                message_content = f"**Base Submission**\n"
+                                if team_name:
+                                    message_content += f"Team: {team_name}\n"
+                                message_content += f"District: {district_name}"
+                                
+                                stored_msg = await storage_channel.send(
+                                    content=message_content,
+                                    file=discord.File(io.BytesIO(image_bytes), filename=filename)
+                                )
+                                log.info("Posted screenshot to Discord storage channel for visibility")
+                                
+                                # If Cloudinary worked, use that; otherwise use Discord URL
+                                if cloudinary_url:
+                                    return cloudinary_url
+                                else:
+                                    return stored_msg.attachments[0].url
+                except Exception as e:
+                    log.warning(f"Failed to post base screenshot to storage channel: {e}")
+        
+        # Return Cloudinary URL if we have it, otherwise original attachment URL
+        if cloudinary_url:
+            return cloudinary_url
+        
+        log.warning("No storage channel configured and Cloudinary not available, using original attachment URL")
+        return attachment.url
 
     async def _render_all_bases_status(self) -> Optional[io.BytesIO]:
         """Render an image showing base submission status for all pending/scheduled matches."""
@@ -283,9 +297,6 @@ class Bases(commands.Cog):
             )
             return
 
-        # Re-upload screenshot to storage channel for a permanent URL
-        screenshot_url = await self._permanent_screenshot_url(interaction.guild, screenshot)
-
         is_admin_user = interaction.user.id in ADMIN_IDS
 
         async with connection.pool.acquire() as conn:
@@ -303,7 +314,7 @@ class Bases(commands.Cog):
 
             # Admin can specify team, otherwise find user's team
             if is_admin_user and team:
-                team_record = await conn.fetchrow("SELECT id FROM teams WHERE name = $1", team)
+                team_record = await conn.fetchrow("SELECT id, name FROM teams WHERE name = $1", team)
                 if not team_record:
                     await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team}' not found."), ephemeral=True)
                     return
@@ -315,7 +326,7 @@ class Bases(commands.Cog):
                     return
             else:
                 team_record = await conn.fetchrow(
-                    """SELECT t.id FROM teams t
+                    """SELECT t.id, t.name FROM teams t
                     JOIN team_members tm ON t.id = tm.team_id
                     WHERE tm.user_id = $1 AND tm.role IN ('leader', 'sudo')
                     AND t.id IN ($2, $3)""",
@@ -328,6 +339,10 @@ class Bases(commands.Cog):
                     )
                     return
             team_id = team_record["id"]
+            team_name = team_record["name"]
+            
+            # Re-upload screenshot to storage channel for a permanent URL (now we have team info)
+            screenshot_url = await self._permanent_screenshot_url(interaction.guild, screenshot, team_name, district)
 
             existing = await conn.fetchrow(
                 "SELECT id FROM bases WHERE team_id = $1 AND match_id = $2 AND district = $3",
@@ -579,16 +594,11 @@ class Bases(commands.Cog):
             )
             return
 
-        # Send a single message with all images
+        # Send a single message with simple header text and all images as attachments
         message_text = f"**{team1['name']} vs {team2['name']}\n{team_record['name']} Bases**"
-        
-        if failed_districts:
-            district_names = [DISTRICT_NAMES[d] for d in failed_districts]
-            message_text += f"\n⚠️ Some bases could not be loaded: {', '.join(district_names)}"
         
         await interaction.followup.send(content=message_text, files=files)
         log.info(f"Sent {len(files)}/9 bases for team {team_record['name']} in match #{match_id}")
-        await interaction.followup.send(content=message_text, files=files)
 
     @app_commands.command(name="remind-bases", description="Check all pending/scheduled matches and remind teams with missing bases (Admin only).")
     @is_admin()
