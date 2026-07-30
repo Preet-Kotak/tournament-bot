@@ -30,11 +30,3 @@ def to_sans_serif_bold(text: str) -> str:
             result.append(char)
     
     return ''.join(result)
-
-
-# Test examples
-if __name__ == "__main__":
-    print("Testing sans-serif bold conversion:")
-    print(f"Team Phoenix -> {to_sans_serif_bold('Team Phoenix')}")
-    print(f"Team Dragon vs Team Phoenix -> {to_sans_serif_bold('Team Dragon vs Team Phoenix')}")
-    print(f"Match 123 -> {to_sans_serif_bold('Match 123')}")

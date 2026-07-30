@@ -33,3 +33,8 @@ SELF_ROLES_CHANNEL_ID = int(os.getenv("SELF_ROLES_CHANNEL_ID") or 0)
 RENDER_URL = os.getenv("RENDER_URL", "")
 PORT = int(os.getenv("PORT", "8080"))
 KEEPALIVE_INTERVAL = int(os.getenv("KEEPALIVE_INTERVAL", "300"))
+
+# Cloudinary configuration (optional - falls back to Discord storage if not configured)
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
+CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
+CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")

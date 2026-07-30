@@ -766,39 +766,31 @@ class Matches(commands.Cog):
         final_totals = {team1_id: tuple(totals[team1_id]), team2_id: tuple(totals[team2_id])}
         if final_totals[team1_id] > final_totals[team2_id]:
             winner_name = t1_name
-            winner_logo_url = match['team1_logo_url']
         elif final_totals[team2_id] > final_totals[team1_id]:
             winner_name = t2_name
-            winner_logo_url = match['team2_logo_url']
         else:
             winner_name = "Tie"
-            winner_logo_url = None
 
-        background_bytes = await _download_image(winner_logo_url)
-        result_image = render_match_result_image(
-            t1_name,
-            t2_name,
-            result_rows,
-            final_totals,
-            team1_id,
-            team2_id,
-            subtitle=subtitle,
-            note=note,
-            background_bytes=background_bytes,
-        )
-
-        result_file = discord.File(result_image, filename=f"match_{match_id}_result.png")
-        result_embed = discord.Embed(color=discord.Color.teal())
-        result_embed.set_image(url=f"attachment://match_{match_id}_result.png")
-        result_embed.set_footer(text="Anshu's Invitational 3")
+        # Build the final message with scoreboard and winner announcement
+        final_message = await build_match_embed(match_id)
+        if final_message:
+            final_message += f"\n\n**Winner: {winner_name}**"
+            
+            # Check if Ivory Tower lost
+            ivory_tower_lost = False
+            if winner_name != "Tie":
+                loser_name = t2_name if winner_name == t1_name else t1_name
+                if loser_name.lower() == "ivory tower":
+                    ivory_tower_lost = True
+                    final_message += '\n\n*"nah after a terrible 70% 2 star on gq from pl i knew it was over. i didn\'t even played 1 district serious unfortunately. Would have really liked to. 2 out of 3, maybe even 3/3 depending on the bl"*'
 
         result_message_updated = False
-        if MATCH_EMBED_CHANNEL_ID and match['embed_message_id']:
+        if MATCH_EMBED_CHANNEL_ID and match['embed_message_id'] and final_message:
             embed_channel = self.bot.get_channel(MATCH_EMBED_CHANNEL_ID)
             if embed_channel:
                 try:
                     msg = await embed_channel.fetch_message(match['embed_message_id'])
-                    await msg.edit(content=None, embed=result_embed, attachments=[result_file])
+                    await msg.edit(content=final_message, embed=None)
                     result_message_updated = True
                 except discord.NotFound:
                     log.warning(f"Result message not found for match {match_id}")
