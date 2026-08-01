@@ -155,3 +155,38 @@ async def completed_match_autocomplete(interaction: discord.Interaction, current
         return choices[:25]
     except Exception:
         return []
+
+
+async def active_or_completed_match_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice]:
+    """Autocomplete for active or completed matches with caching."""
+    global _match_cache, _match_cache_expiry
+    
+    try:
+        async with _match_cache_lock:
+            now = datetime.now()
+            if _match_cache is None or _match_cache_expiry is None or now > _match_cache_expiry:
+                async with connection.pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        """
+                        SELECT m.id, m.status, t1.name AS t1, t2.name AS t2
+                        FROM matches m
+                        JOIN teams t1 ON m.team1_id = t1.id
+                        JOIN teams t2 ON m.team2_id = t2.id
+                        ORDER BY m.id DESC
+                        """
+                    )
+                _match_cache = rows
+                _match_cache_expiry = now + timedelta(seconds=CACHE_TTL)
+        
+        # Filter in memory
+        choices = []
+        current_lower = current.lower()
+        for r in _match_cache:
+            if r["status"] in ("active", "completed"):
+                status_label = f" ({r['status']})" if r["status"] == "completed" else ""
+                label = f"#{r['id']}: {r['t1']} vs {r['t2']}{status_label}"
+                if current_lower in label.lower():
+                    choices.append(app_commands.Choice(name=label[:100], value=r["id"]))
+        return choices[:25]
+    except Exception:
+        return []

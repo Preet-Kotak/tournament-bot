@@ -6,14 +6,16 @@ from typing import Optional
 
 import bot.db.connection as connection
 from bot.utils.checks import is_admin
-from bot.utils.embeds import success_embed, error_embed
+from bot.utils.embeds import success_embed, error_embed, admin_log_embed
 from bot.utils.discord_utils import player_link
 from bot.utils.constants import DISTRICT_NAMES, resolve_district
 from bot.utils.autocomplete import (
     district_autocomplete,
     team_autocomplete,
     active_match_autocomplete,
+    active_or_completed_match_autocomplete,
 )
+from bot.config import ADMIN_LOG_CHANNEL_ID
 
 log = logging.getLogger(__name__)
 
@@ -166,6 +168,47 @@ class EditAttackModal(discord.ui.Modal, title="Edit Attack Details"):
             )
         )
 
+        # Send admin log
+        if ADMIN_LOG_CHANNEL_ID:
+            log_channel = interaction.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+            if log_channel:
+                async with connection.pool.acquire() as conn:
+                    match_info = await conn.fetchrow(
+                        """SELECT t1.name AS team1, t2.name AS team2
+                        FROM matches m
+                        JOIN teams t1 ON m.team1_id = t1.id
+                        JOIN teams t2 ON m.team2_id = t2.id
+                        WHERE m.id = $1""",
+                        self.match_id
+                    )
+                    
+                    # Get attacker names
+                    attacks = await conn.fetch(
+                        """SELECT a.attack_num, a.attacker_id
+                        FROM attacks a
+                        WHERE match_id = $1 AND team_id = $2 AND district = $3
+                        ORDER BY attack_num""",
+                        self.match_id, self.team_id, self.district
+                    )
+                
+                attacker1_id = attacks[0]["attacker_id"] if len(attacks) > 0 else None
+                attacker2_id = attacks[1]["attacker_id"] if len(attacks) > 1 else None
+                
+                attacker1_str = f"<@{attacker1_id}>" if attacker1_id else "Unknown"
+                attacker2_str = f"<@{attacker2_id}>" if attacker2_id else "Unknown"
+                
+                log_embed = admin_log_embed(
+                    "✏️ Attacks Edited",
+                    f"**Match:** #{self.match_id} - {match_info['team1']} vs {match_info['team2']}\n"
+                    f"**Team:** {self.team_name}\n"
+                    f"**District:** {district_name}\n"
+                    f"**Attack 1:** {attacker1_str} — {a1_stars}⭐ {a1_percent}%\n"
+                    f"**Attack 2:** {attacker2_str} — {a2_stars}⭐ {a2_percent}%\n"
+                    f"**Edited by:** {interaction.user.mention}",
+                    color=discord.Color.orange()
+                )
+                await log_channel.send(embed=log_embed)
+
         from bot.cogs.matches import refresh_match_embed
         await refresh_match_embed(self.cog.bot, self.match_id)
 
@@ -289,13 +332,38 @@ class Attacks(commands.Cog):
             )
         )
 
+        # Send admin log
+        if ADMIN_LOG_CHANNEL_ID:
+            log_channel = interaction.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+            if log_channel:
+                async with connection.pool.acquire() as conn:
+                    match_info = await conn.fetchrow(
+                        """SELECT t1.name AS team1, t2.name AS team2
+                        FROM matches m
+                        JOIN teams t1 ON m.team1_id = t1.id
+                        JOIN teams t2 ON m.team2_id = t2.id
+                        WHERE m.id = $1""",
+                        match
+                    )
+                
+                log_embed = admin_log_embed(
+                    "⚔️ Attacks Logged",
+                    f"**Match:** #{match} - {match_info['team1']} vs {match_info['team2']}\n"
+                    f"**Team:** {team}\n"
+                    f"**District:** {district}\n"
+                    f"**Attack 1:** {player_link(attacker1.id, attacker1.display_name)} — {attack1_stars}⭐ {attack1_percent}%\n"
+                    f"**Attack 2:** {player_link(attacker2.id, attacker2.display_name)} — {attack2_stars}⭐ {attack2_percent}%\n"
+                    f"**Logged by:** {interaction.user.mention}"
+                )
+                await log_channel.send(embed=log_embed)
+
         from bot.cogs.matches import refresh_match_embed
         await refresh_match_embed(self.bot, match)
 
     @app_commands.command(name="edit-attack", description="Edit attack stars and percent for a district (Admin only).")
-    @app_commands.autocomplete(match=active_match_autocomplete, district=district_autocomplete, team=team_autocomplete)
+    @app_commands.autocomplete(match=active_or_completed_match_autocomplete, district=district_autocomplete, team=team_autocomplete)
     @app_commands.describe(
-        match="The active match ID",
+        match="The match ID (active or completed)",
         district="The district name",
         team="The attacking team",
     )
@@ -347,9 +415,9 @@ class Attacks(commands.Cog):
         await interaction.response.send_modal(modal)
 
     @app_commands.command(name="edit-attacker", description="Change the attacker for a specific attack (Admin only).")
-    @app_commands.autocomplete(match=active_match_autocomplete, district=district_autocomplete, team=team_autocomplete)
+    @app_commands.autocomplete(match=active_or_completed_match_autocomplete, district=district_autocomplete, team=team_autocomplete)
     @app_commands.describe(
-        match="The active match ID",
+        match="The match ID (active or completed)",
         district="The district name",
         team="The attacking team",
         attack_number="Attack number (1 or 2)",
@@ -411,6 +479,40 @@ class Attacks(commands.Cog):
                 f"Attack #{attack_number} at **{district}** for **{team}** is now assigned to {player_link(new_attacker.id, new_attacker.display_name)}."
             )
         )
+
+        # Send admin log
+        if ADMIN_LOG_CHANNEL_ID:
+            log_channel = interaction.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+            if log_channel:
+                async with connection.pool.acquire() as conn:
+                    match_info = await conn.fetchrow(
+                        """SELECT t1.name AS team1, t2.name AS team2
+                        FROM matches m
+                        JOIN teams t1 ON m.team1_id = t1.id
+                        JOIN teams t2 ON m.team2_id = t2.id
+                        WHERE m.id = $1""",
+                        match
+                    )
+                    
+                    # Get attack details
+                    attack_info = await conn.fetchrow(
+                        """SELECT stars_after, percent_after
+                        FROM attacks
+                        WHERE match_id = $1 AND team_id = $2 AND district = $3 AND attack_num = $4""",
+                        match, team_record["id"], district_num, attack_number
+                    )
+                
+                log_embed = admin_log_embed(
+                    "👤 Attacker Changed",
+                    f"**Match:** #{match} - {match_info['team1']} vs {match_info['team2']}\n"
+                    f"**Team:** {team}\n"
+                    f"**District:** {district}\n"
+                    f"**Attack #{attack_number}:** {player_link(new_attacker.id, new_attacker.display_name)} — "
+                    f"{attack_info['stars_after']}⭐ {attack_info['percent_after']}%\n"
+                    f"**Changed by:** {interaction.user.mention}",
+                    color=discord.Color.gold()
+                )
+                await log_channel.send(embed=log_embed)
 
 
 async def setup(bot: commands.Bot):
