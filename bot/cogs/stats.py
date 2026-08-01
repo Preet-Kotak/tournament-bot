@@ -750,8 +750,8 @@ class Stats(commands.Cog):
                         if d_avg_stars == 0 or d_avg_pct == 0:
                             continue
 
-                        ratio_stars = avg_stars / d_avg_stars
-                        ratio_pct   = avg_pct   / d_avg_pct
+                        ratio_stars = float(avg_stars) / d_avg_stars
+                        ratio_pct   = float(avg_pct)   / d_avg_pct
 
                         adj_stars = min(ratio_stars * global_avg_stars, 3.0)
                         adj_pct   = min(ratio_pct   * global_avg_percent, 100.0)
@@ -907,8 +907,8 @@ class Stats(commands.Cog):
                         if d_avg_stars == 0 or d_avg_pct == 0:
                             continue
 
-                        ratio_stars = avg_stars / d_avg_stars
-                        ratio_pct   = avg_pct   / d_avg_pct
+                        ratio_stars = float(avg_stars) / d_avg_stars
+                        ratio_pct   = float(avg_pct)   / d_avg_pct
 
                         adj_stars = min(ratio_stars * global_avg_stars, 3.0)
                         adj_pct   = min(ratio_pct   * global_avg_percent, 100.0)
