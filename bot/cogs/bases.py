@@ -1,9 +1,11 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import logging
 import io
 from typing import Optional
+from datetime import datetime, timedelta
+import pytz
 
 import aiohttp
 import bot.db.connection as connection
@@ -59,6 +61,13 @@ class Bases(commands.Cog):
             log.info("Cloudinary integration enabled for base screenshots")
         else:
             log.info("Cloudinary not configured - using Discord storage channel fallback")
+        
+        # Start the automatic reminder task
+        self.auto_remind_bases.start()
+    
+    def cog_unload(self):
+        """Stop the reminder task when the cog is unloaded."""
+        self.auto_remind_bases.cancel()
 
     async def _permanent_screenshot_url(self, guild: discord.Guild, attachment: discord.Attachment, team_name: str = None, district: int = None) -> str:
         """Upload screenshot to Cloudinary for permanent storage AND post to Discord storage channel for visibility."""
@@ -341,6 +350,81 @@ class Bases(commands.Cog):
             team_id = team_record["id"]
             team_name = team_record["name"]
             
+            # Check deadline for base submission (admins can bypass)
+            if not is_admin_user and match["scheduled_time"]:
+                ist = pytz.timezone('Asia/Kolkata')
+                now_utc = datetime.utcnow().replace(tzinfo=pytz.UTC)
+                now_ist = now_utc.astimezone(ist)
+                match_time_utc = match["scheduled_time"].replace(tzinfo=pytz.UTC)
+                match_time_ist = match_time_utc.astimezone(ist)
+                
+                # Check if match is on weekend (Friday 12:30 IST to Monday 12:30 IST)
+                friday_1230_ist = match_time_ist.replace(hour=12, minute=30, second=0, microsecond=0)
+                days_until_friday = (match_time_ist.weekday() - 4) % 7
+                if days_until_friday == 0 and match_time_ist.time() < friday_1230_ist.time():
+                    days_until_friday = 7
+                previous_friday_1230 = (match_time_ist - timedelta(days=days_until_friday)).replace(hour=12, minute=30, second=0, microsecond=0)
+                monday_1230_ist = previous_friday_1230 + timedelta(days=3)
+                is_weekend_match = previous_friday_1230 <= match_time_ist <= monday_1230_ist
+                
+                # Determine deadline time
+                if is_weekend_match:
+                    # Weekend match: deadline is 12 hours before Friday 12:30 PM IST (Friday 00:30 AM IST)
+                    deadline_time = previous_friday_1230 - timedelta(hours=12)
+                    deadline_hours = 12  # For display purposes
+                else:
+                    # Normal match: deadline is 2 hours before match time
+                    deadline_time = match_time_ist - timedelta(hours=2)
+                    deadline_hours = 2  # For display purposes
+                
+                # Check if we're past the deadline
+                past_deadline = now_ist >= deadline_time
+                
+                # Check how many bases already submitted
+                submitted_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM bases WHERE team_id = $1 AND match_id = $2",
+                    team_id, match_id
+                )
+                
+                # If past deadline
+                if past_deadline:
+                    # If all 9 bases already submitted
+                    if submitted_count >= 9:
+                        match_time_str = match_time_ist.strftime('%A, %B %d at %I:%M %p IST')
+                        deadline_str = deadline_time.strftime('%A, %B %d at %I:%M %p IST')
+                        await interaction.followup.send(
+                            embed=error_embed(
+                                "❌ Too Late to Submit Bases",
+                                f"The deadline for base submission has passed.\n\n"
+                                f"**Deadline**: {deadline_str}\n"
+                                f"**Match Time**: {match_time_str}\n"
+                                f"**Status**: All 9 bases have already been submitted. Those bases will be used for the match.\n\n"
+                                f"If you need to make changes, please contact an admin."
+                            ),
+                            ephemeral=True
+                        )
+                        return
+                    
+                    # If not all bases submitted
+                    else:
+                        match_time_str = match_time_ist.strftime('%A, %B %d at %I:%M %p IST')
+                        deadline_str = deadline_time.strftime('%A, %B %d at %I:%M %p IST')
+                        missing_count = 9 - submitted_count
+                        await interaction.followup.send(
+                            embed=error_embed(
+                                "❌ Too Late to Submit Bases",
+                                f"The deadline for base submission has passed.\n\n"
+                                f"**Deadline**: {deadline_str}\n"
+                                f"**Match Time**: {match_time_str}\n"
+                                f"**Bases Submitted**: {submitted_count}/9\n"
+                                f"**Missing Bases**: {missing_count}\n\n"
+                                f"⚠️ **Admins will provide bases for the missing districts.**\n\n"
+                                f"If you have urgent concerns, please contact an admin immediately."
+                            ),
+                            ephemeral=True
+                        )
+                        return
+            
             # Re-upload screenshot to storage channel for a permanent URL (now we have team info)
             screenshot_url = await self._permanent_screenshot_url(interaction.guild, screenshot, team_name, district)
 
@@ -601,11 +685,22 @@ class Bases(commands.Cog):
         log.info(f"Sent {len(files)}/9 bases for team {team_record['name']} in match #{match_id}")
 
     @app_commands.command(name="remind-bases", description="Check all pending/scheduled matches and remind teams with missing bases (Admin only).")
+    @app_commands.describe(team="(Optional) Select a specific team to remind. If not specified, all teams will be checked.")
+    @app_commands.autocomplete(team=team_autocomplete)
     @is_admin()
-    async def remind_bases(self, interaction: discord.Interaction):
+    async def remind_bases(self, interaction: discord.Interaction, team: Optional[str] = None):
         await interaction.response.defer(ephemeral=False)
 
         async with connection.pool.acquire() as conn:
+            # If team is specified, get team ID first
+            team_filter_id = None
+            if team:
+                team_filter = await conn.fetchrow("SELECT id, name FROM teams WHERE name = $1", team)
+                if not team_filter:
+                    await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team}' not found."))
+                    return
+                team_filter_id = team_filter["id"]
+            
             # Get all matches that are pending or scheduled (not completed)
             matches = await conn.fetch(
                 """SELECT m.id, m.team1_id, m.team2_id, 
@@ -630,6 +725,10 @@ class Bases(commands.Cog):
                 
                 # Check both teams for this match
                 for team_id in [match["team1_id"], match["team2_id"]]:
+                    # If team filter is specified, skip teams that don't match
+                    if team_filter_id and team_id != team_filter_id:
+                        continue
+                    
                     team_record = await conn.fetchrow(
                         "SELECT id, name, team_role_id, channel_id FROM teams WHERE id = $1",
                         team_id
@@ -670,6 +769,9 @@ class Bases(commands.Cog):
         # Build summary message
         summary_parts = []
         
+        if team:
+            summary_parts.append(f"**Checking reminders for: {team}**\n")
+        
         if reminders_sent:
             summary_parts.append("**Reminders Sent:**")
             summary_parts.extend(reminders_sent)
@@ -679,11 +781,249 @@ class Bases(commands.Cog):
             summary_parts.extend(all_complete)
         
         if not reminders_sent and not all_complete:
-            await interaction.followup.send(embed=error_embed("No Teams", "No teams found in pending/scheduled matches."))
+            if team:
+                await interaction.followup.send(embed=error_embed("No Matches", f"Team **{team}** has no pending/scheduled matches or is not missing any bases."))
+            else:
+                await interaction.followup.send(embed=error_embed("No Teams", "No teams found in pending/scheduled matches."))
             return
 
         summary = "\n".join(summary_parts)
         await interaction.followup.send(embed=success_embed("Base Reminders Complete", summary))
+
+    @app_commands.command(name="reset-base-reminder", description="Reset the automatic reminder status for a match (Admin only).")
+    @app_commands.describe(match_id="The match ID to reset the reminder status for")
+    @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete)
+    @is_admin()
+    async def reset_base_reminder(self, interaction: discord.Interaction, match_id: int):
+        """Reset the reminder-sent flag so automatic reminders can be sent again for this match."""
+        await interaction.response.defer(ephemeral=True)
+        
+        async with connection.pool.acquire() as conn:
+            match = await conn.fetchrow("SELECT id, status FROM matches WHERE id = $1", match_id)
+            if not match:
+                await interaction.followup.send(embed=error_embed("Not Found", f"Match #{match_id} does not exist."))
+                return
+            
+            # Delete the reminder flag
+            result = await conn.execute(
+                "DELETE FROM settings WHERE key = $1",
+                f"base_reminder_sent_{match_id}"
+            )
+        
+        await interaction.followup.send(
+            embed=success_embed(
+                "Reminder Reset",
+                f"Automatic base reminder status has been reset for Match #{match_id}. "
+                f"The bot will send reminders again when the scheduled time is reached."
+            )
+        )
+
+    @tasks.loop(hours=1)
+    async def auto_remind_bases(self):
+        """
+        Automatically check for upcoming matches and send base reminders.
+        
+        Rules:
+        - For normal matches: Send reminder 12 hours before match time
+        - For weekend matches (Friday 12:30 IST to Monday 12:30 IST): 
+          Send reminder on Thursday at 12:30 IST
+        """
+        try:
+            ist = pytz.timezone('Asia/Kolkata')
+            now_utc = datetime.utcnow().replace(tzinfo=pytz.UTC)
+            now_ist = now_utc.astimezone(ist)
+            
+            log.info(f"[Auto Reminder] Checking for matches at {now_ist.strftime('%Y-%m-%d %H:%M:%S')} IST")
+            
+            async with connection.pool.acquire() as conn:
+                # Get all scheduled matches that have a scheduled_time
+                matches = await conn.fetch(
+                    """SELECT m.id, m.team1_id, m.team2_id, m.scheduled_time,
+                              t1.name AS team1_name, t1.team_role_id AS team1_role_id, t1.channel_id AS team1_channel_id,
+                              t2.name AS team2_name, t2.team_role_id AS team2_role_id, t2.channel_id AS team2_channel_id
+                       FROM matches m
+                       JOIN teams t1 ON m.team1_id = t1.id
+                       JOIN teams t2 ON m.team2_id = t2.id
+                       WHERE m.status IN ('pending', 'scheduled')
+                       AND m.scheduled_time IS NOT NULL"""
+                )
+                
+                if not matches:
+                    log.info("[Auto Reminder] No scheduled matches found")
+                    return
+                
+                for match in matches:
+                    match_id = match["id"]
+                    match_time_utc = match["scheduled_time"].replace(tzinfo=pytz.UTC)
+                    match_time_ist = match_time_utc.astimezone(ist)
+                    
+                    # Check if already reminded for this match
+                    already_reminded = await conn.fetchval(
+                        "SELECT value FROM settings WHERE key = $1",
+                        f"base_reminder_sent_{match_id}"
+                    )
+                    
+                    if already_reminded == "true":
+                        continue
+                    
+                    should_remind = False
+                    reminder_time_ist = None
+                    
+                    # Check if match is on weekend (Friday 12:30 IST to Monday 12:30 IST)
+                    friday_1230_ist = match_time_ist.replace(hour=12, minute=30, second=0, microsecond=0)
+                    # Go back to find the previous Friday
+                    days_until_friday = (match_time_ist.weekday() - 4) % 7
+                    if days_until_friday == 0 and match_time_ist.time() < friday_1230_ist.time():
+                        days_until_friday = 7
+                    previous_friday_1230 = (match_time_ist - timedelta(days=days_until_friday)).replace(hour=12, minute=30, second=0, microsecond=0)
+                    
+                    monday_1230_ist = previous_friday_1230 + timedelta(days=3)  # Monday after that Friday
+                    
+                    # Check if match is in weekend window
+                    is_weekend_match = previous_friday_1230 <= match_time_ist <= monday_1230_ist
+                    
+                    if is_weekend_match:
+                        # Weekend match: remind on Thursday 12:30 IST
+                        thursday_1230_ist = previous_friday_1230 - timedelta(days=1)
+                        reminder_time_ist = thursday_1230_ist
+                        
+                        # Check if it's now Thursday 12:30 IST (within 1 hour window)
+                        time_until_reminder = (reminder_time_ist - now_ist).total_seconds()
+                        should_remind = -1800 <= time_until_reminder <= 3600  # Within 30 min before to 1 hour after
+                    else:
+                        # Normal match: remind 12 hours before
+                        reminder_time_ist = match_time_ist - timedelta(hours=12)
+                        
+                        # Check if it's time to remind (within 1 hour window)
+                        time_until_reminder = (reminder_time_ist - now_ist).total_seconds()
+                        should_remind = -1800 <= time_until_reminder <= 3600  # Within 30 min before to 1 hour after
+                    
+                    if not should_remind:
+                        continue
+                    
+                    log.info(f"[Auto Reminder] Match #{match_id} ({match['team1_name']} vs {match['team2_name']}) - Sending reminders")
+                    
+                    # Track reminder status for admin log
+                    reminder_summary = []
+                    
+                    # Send reminders to both teams
+                    for team_data in [
+                        {"id": match["team1_id"], "name": match["team1_name"], "role_id": match["team1_role_id"], "channel_id": match["team1_channel_id"]},
+                        {"id": match["team2_id"], "name": match["team2_name"], "role_id": match["team2_role_id"], "channel_id": match["team2_channel_id"]}
+                    ]:
+                        team_id = team_data["id"]
+                        team_name = team_data["name"]
+                        
+                        # Check which bases are missing
+                        submitted = await conn.fetch(
+                            "SELECT district FROM bases WHERE team_id = $1 AND match_id = $2",
+                            team_id, match_id
+                        )
+                        
+                        submitted_districts = {row["district"] for row in submitted}
+                        missing = [d for d in range(9) if d not in submitted_districts]
+                        
+                        if not missing:
+                            log.info(f"[Auto Reminder] Team {team_name} has all bases submitted")
+                            reminder_summary.append(f"**{team_name}**: ✅ All bases submitted (no reminder needed)")
+                            continue
+                        
+                        # Get guild and channel
+                        if not team_data["channel_id"]:
+                            log.warning(f"[Auto Reminder] Team {team_name} has no channel configured")
+                            reminder_summary.append(f"**{team_name}**: ⚠️ No channel configured")
+                            continue
+                        
+                        # Try to get guild from any channel in the bot
+                        guild = None
+                        for g in self.bot.guilds:
+                            channel = g.get_channel(team_data["channel_id"])
+                            if channel:
+                                guild = g
+                                break
+                        
+                        if not guild:
+                            log.warning(f"[Auto Reminder] Could not find guild for team {team_name}")
+                            reminder_summary.append(f"**{team_name}**: ⚠️ Guild not found")
+                            continue
+                        
+                        team_channel = guild.get_channel(team_data["channel_id"])
+                        if not team_channel:
+                            log.warning(f"[Auto Reminder] Could not find channel for team {team_name}")
+                            reminder_summary.append(f"**{team_name}**: ⚠️ Channel not found")
+                            continue
+                        
+                        # Build reminder message
+                        missing_lines = [f"❌ {DISTRICT_NAMES[d]}" for d in missing]
+                        team_role = guild.get_role(team_data["role_id"]) if team_data["role_id"] else None
+                        ping = team_role.mention if team_role else team_name
+                        
+                        try:
+                            match_time_str = match_time_ist.strftime('%A, %B %d at %I:%M %p IST')
+                            reminder_msg = f"🔔 **Automatic Base Reminder**\n\nYour match is scheduled for **{match_time_str}**.\n\nPlease submit your remaining bases as soon as possible!"
+                            
+                            await team_channel.send(
+                                content=f"{ping}\n{reminder_msg}",
+                                embed=remind_bases_embed(match_id, missing_lines)
+                            )
+                            log.info(f"[Auto Reminder] Sent reminder to {team_name} for {len(missing)} missing bases")
+                            
+                            # Add to summary with list of missing districts
+                            missing_district_names = [DISTRICT_NAMES[d] for d in missing]
+                            reminder_summary.append(f"**{team_name}**: ✅ Reminded ({len(missing)} missing)\n  • Missing: {', '.join(missing_district_names)}")
+                        except Exception as e:
+                            log.error(f"[Auto Reminder] Failed to send reminder to {team_name}: {e}")
+                            reminder_summary.append(f"**{team_name}**: ❌ Failed to send reminder")
+                    
+                    # Mark this match as reminded
+                    await conn.execute(
+                        """INSERT INTO settings (key, value) VALUES ($1, 'true')
+                           ON CONFLICT (key) DO UPDATE SET value = 'true'""",
+                        f"base_reminder_sent_{match_id}"
+                    )
+                    log.info(f"[Auto Reminder] Marked match #{match_id} as reminded")
+                    
+                    # Send admin log notification
+                    if ADMIN_LOG_CHANNEL_ID and reminder_summary:
+                        try:
+                            # Find the guild from any guild the bot is in
+                            admin_log_channel = None
+                            for g in self.bot.guilds:
+                                channel = g.get_channel(ADMIN_LOG_CHANNEL_ID)
+                                if channel:
+                                    admin_log_channel = channel
+                                    break
+                            
+                            if admin_log_channel:
+                                match_time_str = match_time_ist.strftime('%A, %B %d at %I:%M %p IST')
+                                reminder_type = "Weekend Match" if is_weekend_match else "Normal Match"
+                                
+                                summary_text = "\n".join(reminder_summary)
+                                admin_message = (
+                                    f"🔔 **Automatic Base Reminders Sent**\n\n"
+                                    f"**Match**: #{match_id} - {match['team1_name']} vs {match['team2_name']}\n"
+                                    f"**Match Time**: {match_time_str}\n"
+                                    f"**Reminder Type**: {reminder_type}\n\n"
+                                    f"**Status**:\n{summary_text}"
+                                )
+                                
+                                await admin_log_channel.send(
+                                    embed=admin_log_embed("Automatic Base Reminder", admin_message)
+                                )
+                                log.info(f"[Auto Reminder] Sent admin log notification for match #{match_id}")
+                            else:
+                                log.warning(f"[Auto Reminder] Admin log channel {ADMIN_LOG_CHANNEL_ID} not found")
+                        except Exception as e:
+                            log.error(f"[Auto Reminder] Failed to send admin log notification: {e}")
+        
+        except Exception as e:
+            log.error(f"[Auto Reminder] Error in auto_remind_bases task: {e}", exc_info=True)
+    
+    @auto_remind_bases.before_loop
+    async def before_auto_remind_bases(self):
+        """Wait until the bot is ready before starting the task."""
+        await self.bot.wait_until_ready()
+        log.info("[Auto Reminder] Base reminder task started")
 
 
 async def setup(bot: commands.Bot):
