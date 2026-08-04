@@ -128,6 +128,7 @@ class Stats(commands.Cog):
                     WHERE m.status = 'completed'
                         AND ds.district = $1
                         AND ds.attack2_done = TRUE
+                        AND NOT (ds.current_stars = 0 AND ds.current_percent = 0)
                     GROUP BY t.id, t.name
                     ORDER BY avg_stars DESC, avg_percent DESC
                     """,
@@ -209,6 +210,7 @@ class Stats(commands.Cog):
                     WHERE m.status = 'completed'
                         AND pds.district = $1
                         AND pds.completed = TRUE
+                        AND NOT (pds.final_stars = 0 AND pds.final_percent = 0)
                     GROUP BY pds.player_id
                     ORDER BY avg_stars DESC, avg_percent DESC
                     """,
@@ -274,6 +276,7 @@ class Stats(commands.Cog):
                     JOIN matches m ON ds.match_id = m.id
                     WHERE m.status = 'completed'
                         AND ds.attack2_done = TRUE
+                        AND NOT (ds.current_stars = 0 AND ds.current_percent = 0)
                     GROUP BY ds.district
                     ORDER BY ds.district
                     """
@@ -374,6 +377,7 @@ class Stats(commands.Cog):
                     WHERE pds.player_id = $1
                         AND m.status = 'completed'
                         AND pds.completed = TRUE
+                        AND NOT (pds.final_stars = 0 AND pds.final_percent = 0)
                     GROUP BY pds.district
                     ORDER BY pds.district ASC
                     """,
@@ -509,6 +513,7 @@ class Stats(commands.Cog):
                     WHERE ds.team_id = $1
                         AND m.status = 'completed'
                         AND ds.attack2_done = TRUE
+                        AND NOT (ds.current_stars = 0 AND ds.current_percent = 0)
                     GROUP BY ds.district
                     ORDER BY ds.district ASC
                     """,
@@ -677,6 +682,7 @@ class Stats(commands.Cog):
                         JOIN matches m ON ds.match_id = m.id
                         WHERE m.status = 'completed'
                           AND ds.attack2_done = TRUE
+                          AND NOT (ds.current_stars = 0 AND ds.current_percent = 0)
                         GROUP BY district
                     ) district_avgs
                     """
@@ -700,6 +706,7 @@ class Stats(commands.Cog):
                     JOIN matches m ON ds.match_id = m.id
                     WHERE m.status = 'completed'
                       AND ds.attack2_done = TRUE
+                      AND NOT (ds.current_stars = 0 AND ds.current_percent = 0)
                     GROUP BY district
                     """
                 )
@@ -721,6 +728,7 @@ class Stats(commands.Cog):
                     JOIN matches m ON pds.match_id = m.id
                     WHERE m.status = 'completed'
                       AND pds.completed = TRUE
+                      AND NOT (pds.final_stars = 0 AND pds.final_percent = 0)
                     GROUP BY pds.player_id, pds.district
                     """
                 )
@@ -831,6 +839,7 @@ class Stats(commands.Cog):
                         JOIN matches m ON ds.match_id = m.id
                         WHERE m.status = 'completed'
                           AND ds.attack2_done = TRUE
+                          AND NOT (ds.current_stars = 0 AND ds.current_percent = 0)
                         GROUP BY district
                     ) district_avgs
                     """
@@ -854,6 +863,7 @@ class Stats(commands.Cog):
                     JOIN matches m ON ds.match_id = m.id
                     WHERE m.status = 'completed'
                       AND ds.attack2_done = TRUE
+                      AND NOT (ds.current_stars = 0 AND ds.current_percent = 0)
                     GROUP BY district
                     """
                 )
@@ -877,6 +887,7 @@ class Stats(commands.Cog):
                     JOIN teams t ON ds.team_id = t.id
                     WHERE m.status = 'completed'
                       AND ds.attack2_done = TRUE
+                      AND NOT (ds.current_stars = 0 AND ds.current_percent = 0)
                     GROUP BY ds.team_id, t.name, ds.district
                     """
                 )

@@ -1,10 +1,11 @@
 # 🏆 Clash of Clans Clan Capital Tournament Bot
 
-> A Discord bot for managing Clash of Clans Clan Capital tournaments with automated team management, match scheduling, real-time attack tracking, and comprehensive statistics.
+> A comprehensive Discord bot for managing Clash of Clans Clan Capital tournaments with automated team management, match scheduling, real-time attack tracking, base submissions, and advanced statistics. Built with Python, discord.py, and PostgreSQL.
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Discord.py](https://img.shields.io/badge/discord.py-2.3+-blue.svg)](https://github.com/Rapptz/discord.py)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-336791.svg)](https://www.postgresql.org/)
+[![Cloudinary](https://img.shields.io/badge/Cloudinary-Optional-orange.svg)](https://cloudinary.com/)
 
 ## 📋 Table of Contents
 - [Overview](#overview)
@@ -84,6 +85,10 @@ A Discord bot built for managing competitive Clash of Clans Clan Capital tournam
 - **PostgreSQL** for relational database with ACID compliance
 - **asyncpg** for high-performance async database connections
 - **Pillow (PIL)** for dynamic image generation
+- **Cloudinary** (optional) for cloud-based image storage with Discord fallback
+- **aiohttp** for HTTP server and async web requests
+- **pytz** for timezone handling and match scheduling
+- **python-dotenv** for environment configuration
 
 ### **Architecture**
 ```
@@ -123,7 +128,7 @@ bot/
 
 ## 📖 Command Overview
 
-**36 Slash Commands** organized into 8 categories:
+**46 Slash Commands** organized into 8 categories:
 
 ### **Team Management** (12 commands)
 `/create-team`, `/approve-team`, `/announce-team`, `/add-logo`, `/edit-team`, `/delete-team`, `/set-coleader`, `/set-player-timezone`, `/teams-list`, `/team-info`, and more
@@ -162,22 +167,61 @@ All commands feature:
 - Discord Bot Token
 
 ### **Setup**
+
+1. **Clone the repository**
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure .env file
-DISCORD_TOKEN=your_token
-DATABASE_URL=postgresql://user:pass@host/db
-ADMIN_IDS=your_admin_ids
-GUILD_ID=your_guild_id
-# ... (channel and role IDs)
-
-# Run bot
-python bot/main.py
+git clone <repository-url>
+cd Tbot
 ```
 
-Database tables are created automatically on first run.
+2. **Install dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+3. **Configure environment variables**
+
+Create a `.env` file in the root directory with the following variables:
+
+```env
+# Required - Discord Bot Configuration
+DISCORD_TOKEN=your_discord_bot_token
+DATABASE_URL=postgresql://user:password@host:port/database
+GUILD_ID=your_discord_server_id
+
+# Required - Admin & Role Configuration
+ADMIN_IDS=comma,separated,admin,user,ids
+PARTICIPANT_ROLE_ID=participant_role_id
+
+# Required - Channel IDs
+ADMIN_LOG_CHANNEL_ID=admin_log_channel_id
+APPROVE_ANNOUNCE_CHANNEL_ID=team_approval_announcement_channel_id
+LOGO_STORAGE_CHANNEL_ID=logo_storage_channel_id
+MATCH_EMBED_CHANNEL_ID=match_scoreboard_channel_id
+WELCOME_CHANNEL_ID=welcome_channel_id
+ANNOUNCEMENT_CHANNEL_ID=announcement_channel_id
+SELF_ROLES_CHANNEL_ID=self_roles_channel_id
+
+# Required - Category IDs
+TEAM_CHANNEL_CATEGORY_ID=team_channels_category_id
+MATCH_CATEGORY_ID=match_channels_category_id
+ARCHIVE_CATEGORY_ID=archived_matches_category_id
+
+# Optional - Server Keepalive (for Render/Heroku deployment)
+RENDER_URL=https://your-app.onrender.com
+PORT=8080
+KEEPALIVE_INTERVAL=300
+
+# Optional - Cloudinary (falls back to Discord storage if not configured)
+CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
+CLOUDINARY_API_KEY=your_cloudinary_api_key
+CLOUDINARY_API_SECRET=your_cloudinary_api_secret
+```
+
+4. **Run the bot**
+```bash
+python bot/main.py
+```
 
 ---
 
@@ -185,13 +229,17 @@ Database tables are created automatically on first run.
 
 ### **Technical Features**
 - **5,000+ lines** of Python code with modular cog architecture
+- **8 command cogs** for organized feature separation
 - **9-table PostgreSQL schema** with full relational integrity
-- **36 slash commands** with role-based access control
+- **46 slash commands** with role-based access control
 - **Async architecture** using asyncio/asyncpg for concurrent operations
 - **Real-time scoreboard updates** via event-driven design
 - **Dynamic image generation** with PIL for match result cards
 - **Smart autocomplete** for teams, matches, and districts
 - **Comprehensive statistics engine** with multi-table JOINs and aggregations
+- **Custom error handling** with user-friendly permission checks
+- **HTTP health check server** for deployment on platforms like Render/Heroku
+- **Self-ping keepalive system** to prevent free-tier shutdowns
 
 ### **Core Capabilities**
 ✅ Automated team registration and approval workflows  
@@ -201,4 +249,11 @@ Database tables are created automatically on first run.
 ✅ Advanced statistics and leaderboards  
 ✅ Dynamic PNG generation for match results  
 ✅ Permission-based command access  
-✅ Honeypot system for automated bot detection
+✅ Honeypot system for automated bot detection  
+✅ Timezone-aware match scheduling  
+✅ Interactive help system with dropdown menus  
+✅ Automatic channel and role management  
+✅ Cloud or Discord-based image storage
+
+
+
