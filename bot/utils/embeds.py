@@ -289,7 +289,7 @@ def get_match_management_embed() -> discord.Embed:
             "`/start-match` - Start a match and post the live embed\n"
             "`/end-match` - End a match and move to archive\n"
             "`/delete-match` - Delete a match completely\n"
-            "`/override-score` - Manually override a district score\n"
+            "`/clear-data` - Wipe all match data (testing only)\n"
             "`/matches` - View all upcoming matches\n"
             "`/match-timezones` - Render player UTC offsets for a match"
         ),
@@ -312,7 +312,8 @@ def get_base_management_embed(is_admin: bool) -> discord.Embed:
             "`/view-bases` - View any team's submitted bases (specify team)\n"
             "`/send-bases` - Publicly post a team's base screenshots\n"
             "`/base-status` - Check base submission status (all matches)\n"
-            "`/remind-bases` - Ping a team about missing bases"
+            "`/remind-bases` - Ping a team about missing bases\n"
+            "`/reset-base-reminder` - Reset automatic reminder status for a match"
         )
     else:
         embed.add_field(
