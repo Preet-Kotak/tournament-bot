@@ -211,63 +211,148 @@ def upcoming_matches_embed(rows: list) -> discord.Embed:
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
-def help_admin_embed() -> discord.Embed:
+def get_overview_embed(is_admin: bool, is_participant: bool) -> discord.Embed:
+    """Overview embed shown when /help is first called."""
+    role_name = "Admin" if is_admin else "Participant" if is_participant else "Public"
+    color = discord.Color.red() if is_admin else discord.Color.green() if is_participant else discord.Color.blurple()
+    
     embed = discord.Embed(
-        title="Command Reference - Admin",
-        description="Full access to all tournament commands",
-        color=discord.Color.red(),
+        title=f"� Command Reference - {role_name}",
+        description="Select a category from the dropdown below to view available commands.",
+        color=color,
     )
-    embed.add_field(
-        name="Team Management",
-        value=(
+    
+    if is_admin:
+        categories = "👥 Team Management\n⚔️ Match Management\n🗺️ Base Management\n⚔️ Attack Management\n📊 Statistics\n🎯 Qualifier\n🔧 Utility"
+    elif is_participant:
+        categories = "👥 Team Commands\n🗺️ Base Commands\n🌐 General Commands\n📊 Statistics\n🎯 Qualifier"
+    else:
+        categories = "👥 Team Commands\n📅 Match Commands\n📊 Statistics\n🎯 Qualifier\n🌐 Utility"
+    
+    embed.add_field(name="Available Categories", value=categories, inline=False)
+    embed.set_footer(text=FOOTER)
+    return embed
+
+
+def get_team_management_embed(is_admin: bool) -> discord.Embed:
+    """Team management commands."""
+    embed = discord.Embed(
+        title="👥 Team Management Commands",
+        color=discord.Color.red() if is_admin else discord.Color.green(),
+    )
+    
+    if is_admin:
+        embed.description = (
             "`/create-team` - Register a new team with 3-5 members\n"
             "`/approve-team` - Approve a team and create their private channel\n"
             "`/announce-team` - Post a team announcement (requires logo)\n"
+            "`/add-logo` - Upload a logo for your team (Leader only)\n"
+            "`/admin-add-logo` - Upload or replace a logo for any team\n"
             "`/edit-team` - Change a team's name or full roster\n"
             "`/delete-team` - Delete a team and remove their role\n"
             "`/set-coleader` - Give a team member co-leader permissions\n"
             "`/set-player-timezone` - Store a player's UTC offset\n"
             "`/teams-list` - View all approved teams\n"
-            "`/team-info` - View detailed information about a team"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Match Management",
-        value=(
+            "`/team-info` - View detailed information about a team\n"
+            "`/refresh-all-announcements` - Update logo URLs in all announcements"
+        )
+    else:
+        embed.add_field(
+            name="Leader/Co-Leader Commands",
+            value=(
+                "`/add-logo` - Upload a logo for your team\n"
+                "`/set-player-timezone` - Store a player's UTC offset"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Everyone",
+            value=(
+                "`/create-team` - Register a new team (if not on one)\n"
+                "`/teams-list` - View all approved teams\n"
+                "`/team-info` - View detailed information about a team"
+            ),
+            inline=False,
+        )
+    
+    embed.set_footer(text=FOOTER)
+    return embed
+
+
+def get_match_management_embed() -> discord.Embed:
+    """Match management commands (Admin only)."""
+    embed = discord.Embed(
+        title="⚔️ Match Management Commands",
+        description=(
             "`/set-match` - Create a new match between two teams\n"
             "`/schedule-match` - Set the match time and mark as scheduled\n"
             "`/start-match` - Start a match and post the live embed\n"
             "`/end-match` - End a match and move to archive\n"
             "`/delete-match` - Delete a match completely\n"
+            "`/override-score` - Manually override a district score\n"
             "`/matches` - View all upcoming matches\n"
             "`/match-timezones` - Render player UTC offsets for a match"
         ),
-        inline=False,
+        color=discord.Color.red(),
     )
-    embed.add_field(
-        name="Base Management",
-        value=(
-            "`/submit-base` - Submit a district base for your team\n"
+    embed.set_footer(text=FOOTER)
+    return embed
+
+
+def get_base_management_embed(is_admin: bool) -> discord.Embed:
+    """Base management commands."""
+    embed = discord.Embed(
+        title="🗺️ Base Management Commands",
+        color=discord.Color.red() if is_admin else discord.Color.green(),
+    )
+    
+    if is_admin:
+        embed.description = (
+            "`/submit-base` - Submit a district base (auto-detects district)\n"
             "`/view-bases` - View any team's submitted bases (specify team)\n"
             "`/send-bases` - Publicly post a team's base screenshots\n"
-            "`/base-status` - Check base submission status for a match\n"
+            "`/base-status` - Check base submission status (all matches)\n"
             "`/remind-bases` - Ping a team about missing bases"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Attack Management",
-        value=(
+        )
+    else:
+        embed.add_field(
+            name="Leader/Co-Leader Commands",
+            value="`/submit-base` - Submit a district base (auto-detects district)",
+            inline=False,
+        )
+        embed.add_field(
+            name="All Team Members",
+            value=(
+                "`/view-bases` - View your team's submitted bases\n"
+                "`/base-status` - Check which bases your team has submitted"
+            ),
+            inline=False,
+        )
+    
+    embed.set_footer(text=FOOTER)
+    return embed
+
+
+def get_attack_management_embed() -> discord.Embed:
+    """Attack management commands (Admin only)."""
+    embed = discord.Embed(
+        title="⚔️ Attack Management Commands",
+        description=(
             "`/log-attack` - Log both attacks for a district\n"
             "`/edit-attack` - Edit attack stars and percent\n"
             "`/edit-attacker` - Change the attacker for a specific attack"
         ),
-        inline=False,
+        color=discord.Color.red(),
     )
-    embed.add_field(
-        name="Statistics",
-        value=(
+    embed.set_footer(text=FOOTER)
+    return embed
+
+
+def get_statistics_embed() -> discord.Embed:
+    """Statistics commands (available to everyone)."""
+    embed = discord.Embed(
+        title="📊 Statistics Commands",
+        description=(
             "`/district-stat-team` - Team rankings for a specific district\n"
             "`/district-stat-player` - Player rankings for a specific district\n"
             "`/tournament-stat` - Average scores across all districts\n"
@@ -275,58 +360,66 @@ def help_admin_embed() -> discord.Embed:
             "`/player-stat` - Per-district summary for a player\n"
             "`/team-stat-log` - Full attack log for a team\n"
             "`/team-stat` - Per-district summary for a team\n"
-            "`/match-stat` - District breakdown for a completed match"
+            "`/match-stat` - District breakdown for a completed match\n"
+            "`/relative-lb-player` - Normalized player leaderboard\n"
+            "`/relative-lb-team` - Normalized team leaderboard"
         ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Utility",
-        value=(
-            "`/help` - Show this command reference\n"
-            "`/clear-data` - Wipe all match data (testing only)"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Qualifier",
-        value=(
-            "`/qualifier-submit` - Submit qualifier scores for a team\n"
-            "`/qualifier-lb` - Qualifier leaderboard (ranked by total score)\n"
-            "`/qualifier-team-info` - Team roster and per-district qualifier scores\n"
-            "`/qualifier-district-lb` - Rankings for a specific qualifier district"
-        ),
-        inline=False,
+        color=discord.Color.blue(),
     )
     embed.set_footer(text=FOOTER)
     return embed
 
 
-def help_participant_embed() -> discord.Embed:
+def get_qualifier_embed(is_admin: bool) -> discord.Embed:
+    """Qualifier commands."""
     embed = discord.Embed(
-        title="Command Reference - Participant",
-        description="Commands available to tournament participants",
-        color=discord.Color.green(),
+        title="🎯 Qualifier Commands",
+        color=discord.Color.red() if is_admin else discord.Color.gold(),
     )
-    embed.add_field(
-        name="Team Commands (Leader/Co-Leader Only)",
-        value=(
-            "`/add-logo` - Upload a logo for your team\n"
-            "`/submit-base` - Submit a district base for your team\n"
-            "`/set-player-timezone` - Store a player's UTC offset"
-        ),
-        inline=False,
+    
+    if is_admin:
+        embed.description = (
+            "`/qualifier-submit` - Submit qualifier scores for a team\n"
+            "`/qualifier-lb` - Qualifier leaderboard (ranked by total score)\n"
+            "`/qualifier-team-info` - Team roster and per-district qualifier scores\n"
+            "`/qualifier-district-lb` - Rankings for a specific qualifier district\n"
+            "`/qualifier-toggle-public` - Toggle qualifier commands public/admin-only"
+        )
+    else:
+        embed.description = (
+            "`/qualifier-lb` - Qualifier leaderboard (ranked by total score)\n"
+            "`/qualifier-team-info` - Team roster and qualifier scores\n"
+            "`/qualifier-district-lb` - Rankings for a qualifier district"
+        )
+    
+    embed.set_footer(text=FOOTER)
+    return embed
+
+
+def get_utility_embed(is_admin: bool) -> discord.Embed:
+    """Utility commands."""
+    embed = discord.Embed(
+        title="🔧 Utility Commands" if is_admin else "🌐 Utility Commands",
+        color=discord.Color.red() if is_admin else discord.Color.blurple(),
     )
-    embed.add_field(
-        name="Base Commands (All Team Members)",
-        value=(
-            "`/view-bases` - View your team's submitted bases\n"
-            "`/base-status` - Check which bases your team has submitted"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="General Commands (Everyone)",
-        value=(
+    
+    if is_admin:
+        embed.description = (
+            "`/help` - Show this command reference\n"
+            "`/create-anti-bot-channel` - Create a honeypot channel for scam bots"
+        )
+    else:
+        embed.description = "`/help` - Show this command reference"
+    
+    embed.set_footer(text=FOOTER)
+    return embed
+
+
+def get_general_commands_embed() -> discord.Embed:
+    """General commands for participants."""
+    embed = discord.Embed(
+        title="🌐 General Commands",
+        description=(
             "`/create-team` - Register a new team (if not on one)\n"
             "`/teams-list` - View all approved teams\n"
             "`/team-info` - View detailed information about a team\n"
@@ -334,80 +427,18 @@ def help_participant_embed() -> discord.Embed:
             "`/match-timezones` - Render player UTC offsets for a match\n"
             "`/help` - Show this command reference"
         ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Statistics (Everyone)",
-        value=(
-            "`/district-stat-team` - Team rankings for a specific district\n"
-            "`/district-stat-player` - Player rankings for a specific district\n"
-            "`/tournament-stat` - Average scores across all districts\n"
-            "`/player-stat-log` - Full attack log for a player\n"
-            "`/player-stat` - Per-district summary for a player\n"
-            "`/team-stat-log` - Full attack log for a team\n"
-            "`/team-stat` - Per-district summary for a team\n"
-            "`/match-stat` - District breakdown for a completed match"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Qualifier (Everyone)",
-        value=(
-            "`/qualifier-team-info` - Team roster and qualifier scores\n"
-            "`/qualifier-district-lb` - Rankings for a qualifier district"
-        ),
-        inline=False,
+        color=discord.Color.green(),
     )
     embed.set_footer(text=FOOTER)
     return embed
 
 
-def help_public_embed() -> discord.Embed:
+def get_match_commands_embed() -> discord.Embed:
+    """Match commands for public users."""
     embed = discord.Embed(
-        title="📋 Command Reference",
-        description="Commands available to everyone",
+        title="📅 Match Commands",
+        description="`/matches` - View all upcoming matches",
         color=discord.Color.blurple(),
-    )
-    embed.add_field(
-        name="👥 Team Commands",
-        value=(
-            "`/create-team` — Register a new team with 3–5 members\n"
-            "`/teams-list` — View all approved teams\n"
-            "`/team-info` — View detailed information about a team"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="📅 Match Commands",
-        value="`/matches` — View all upcoming matches",
-        inline=False,
-    )
-    embed.add_field(
-        name="📊 Statistics",
-        value=(
-            "`/district-stat-team` — Team rankings for a specific district\n"
-            "`/district-stat-player` — Player rankings for a specific district\n"
-            "`/tournament-stat` — Average scores across all districts\n"
-            "`/player-stat-log` — Full attack log for a player\n"
-            "`/player-stat` — Per-district summary for a player\n"
-            "`/team-stat-log` — Full attack log for a team\n"
-            "`/team-stat` — Per-district summary for a team\n"
-            "`/match-stat` — District breakdown for a completed match"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="🎯 Qualifier",
-        value=(
-            "`/qualifier-team-info` — Team roster and qualifier scores\n"
-            "`/qualifier-district-lb` — Rankings for a qualifier district"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="🌐 Utility",
-        value="`/help` — Show this command reference",
-        inline=False,
     )
     embed.set_footer(text=FOOTER)
     return embed
