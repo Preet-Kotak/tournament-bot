@@ -356,6 +356,7 @@ def get_statistics_embed() -> discord.Embed:
         description=(
             "`/district-stat-team` - Team rankings for a specific district\n"
             "`/district-stat-player` - Player rankings for a specific district\n"
+            "`/district-stat-log` - Score history after 2nd attack for a district\n"
             "`/tournament-stat` - Average scores across all districts\n"
             "`/player-stat-log` - Full attack log for a player\n"
             "`/player-stat` - Per-district summary for a player\n"

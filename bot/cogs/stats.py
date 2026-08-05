@@ -175,6 +175,72 @@ class Stats(commands.Cog):
                 ephemeral=True,
             )
 
+    # ── /district-stat-log ────────────────────────────────────────────────────
+
+    @app_commands.command(name="district-stat-log", description="View score history after 2nd attack for a specific district.")
+    @app_commands.autocomplete(district=district_autocomplete)
+    @app_commands.describe(
+        district="The district to query",
+    )
+    async def district_stat_log(
+        self,
+        interaction: discord.Interaction,
+        district: str,
+    ):
+        await interaction.response.defer(ephemeral=False)
+
+        district_num = _resolve_district(district)
+        if district_num is None:
+            await interaction.followup.send(embed=error_embed("Invalid District", "District not found."), ephemeral=True)
+            return
+
+        try:
+            async with connection.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        ds.current_stars,
+                        ds.current_percent,
+                        t1.name AS team1_name,
+                        t2.name AS team2_name,
+                        t.name AS team_name,
+                        m.id AS match_id
+                    FROM district_scores ds
+                    JOIN matches m ON ds.match_id = m.id
+                    JOIN teams t1 ON m.team1_id = t1.id
+                    JOIN teams t2 ON m.team2_id = t2.id
+                    JOIN teams t ON ds.team_id = t.id
+                    WHERE m.status = 'completed'
+                        AND ds.district = $1
+                        AND ds.attack2_done = TRUE
+                        AND NOT (ds.current_stars = 0 AND ds.current_percent = 0)
+                    ORDER BY m.id DESC
+                    """,
+                    district_num,
+                )
+
+            if not rows:
+                await interaction.followup.send(
+                    embed=error_embed("No Data", f"No completed matches found for **{district}**."),
+                    ephemeral=True,
+                )
+                return
+
+            lines = [
+                f"{row['team1_name']} vs {row['team2_name']}\n"
+                f"{row['team_name']} — {row['current_stars']}⭐ {row['current_percent']}%"
+                for row in rows
+            ]
+
+            await _send_paginated(interaction, f"District Score Log: {district}", lines)
+
+        except Exception as e:
+            log.error(f"Error in district_stat_log: {e}")
+            await interaction.followup.send(
+                embed=error_embed("Database Error", "An error occurred while fetching district score history."),
+                ephemeral=True,
+            )
+
     # ── /district-stat-player ─────────────────────────────────────────────────
 
     @app_commands.command(name="district-stat-player", description="View player rankings for a specific district.")

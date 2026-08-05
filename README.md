@@ -128,7 +128,7 @@ bot/
 
 ## 📖 Command Overview
 
-**46 Slash Commands** organized into 8 categories:
+**47 Slash Commands** organized into 8 categories:
 
 ### **Team Management** (12 commands)
 `/create-team`, `/approve-team`, `/announce-team`, `/add-logo`, `/edit-team`, `/delete-team`, `/set-coleader`, `/set-player-timezone`, `/teams-list`, `/team-info`, and more
@@ -142,8 +142,8 @@ bot/
 ### **Attack Logging** (3 commands)
 `/log-attack`, `/edit-attack`, `/edit-attacker`
 
-### **Statistics** (9 commands)
-`/district-stat-team`, `/district-stat-player`, `/tournament-stat`, `/player-stat-log`, `/player-stat`, `/team-stat-log`, `/team-stat`, `/match-stat`, `/relative-lb-player`
+### **Statistics** (10 commands)
+`/district-stat-team`, `/district-stat-player`, `/district-stat-log`, `/tournament-stat`, `/player-stat-log`, `/player-stat`, `/team-stat-log`, `/team-stat`, `/match-stat`, `/relative-lb-player`
 
 ### **Qualifier** (5 commands)
 `/qualifier-submit`, `/qualifier-lb`, `/qualifier-team-info`, `/qualifier-district-lb`, `/qualifier-toggle-public`
@@ -231,7 +231,7 @@ python bot/main.py
 - **5,000+ lines** of Python code with modular cog architecture
 - **8 command cogs** for organized feature separation
 - **9-table PostgreSQL schema** with full relational integrity
-- **46 slash commands** with role-based access control
+- **47 slash commands** with role-based access control
 - **Async architecture** using asyncio/asyncpg for concurrent operations
 - **Real-time scoreboard updates** via event-driven design
 - **Dynamic image generation** with PIL for match result cards
