@@ -729,6 +729,7 @@ class Stats(commands.Cog):
             adj_stars   = (player_avg_on_district / district_avg) * global_avg_stars
             adj_percent = (player_avg_on_district / district_avg) * global_avg_percent
         Capped at 3 / 100.  Only counts player_district_stats where completed = TRUE.
+        Fixed division by zero errors.
         """
         await interaction.response.defer(ephemeral=False)
 
@@ -886,6 +887,7 @@ class Stats(commands.Cog):
             adj_stars   = (team_avg_on_district / district_avg) * global_avg_stars
             adj_percent = (team_avg_on_district / district_avg) * global_avg_percent
         Capped at 3 / 100.  Only counts district_scores where attack2_done = TRUE.
+        Fixed division by zero errors.
         """
         await interaction.response.defer(ephemeral=False)
 
