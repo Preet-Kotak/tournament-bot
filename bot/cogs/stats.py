@@ -787,16 +787,16 @@ class Stats(commands.Cog):
                     """
                     SELECT
                         pds.player_id,
+                        pds.match_id,
                         pds.district,
-                        AVG(pds.final_stars)   AS avg_stars,
-                        AVG(pds.final_percent) AS avg_percent,
-                        COUNT(*) AS match_count
+                        pds.final_stars,
+                        pds.final_percent
                     FROM player_district_stats pds
                     JOIN matches m ON pds.match_id = m.id
                     WHERE m.status = 'completed'
                       AND pds.completed = TRUE
                       AND NOT (pds.final_stars = 0 AND pds.final_percent = 0)
-                    GROUP BY pds.player_id, pds.district
+                    ORDER BY pds.player_id, pds.match_id, pds.district
                     """
                 )
 
@@ -806,27 +806,27 @@ class Stats(commands.Cog):
                     )
                     return
 
-                # 4. Group by player and normalize
+                # 4. Group by player and normalize each district instance
                 player_data = defaultdict(list)
                 for r in rows:
                     player_data[r["player_id"]].append(
-                        (r["district"], r["avg_stars"], r["avg_percent"], r["match_count"])
+                        (r["match_id"], r["district"], r["final_stars"], r["final_percent"])
                     )
 
                 player_scores = []
-                for player_id, districts in player_data.items():
+                for player_id, district_instances in player_data.items():
                     adj_stars_sum = 0.0
                     adj_pct_sum   = 0.0
                     district_count = 0
-                    for district, avg_stars, avg_pct, _ in districts:
+                    for match_id, district, stars, percent in district_instances:
                         if district not in district_avg_map:
                             continue
                         d_avg_stars, d_avg_pct = district_avg_map[district]
                         if d_avg_stars == 0 or d_avg_pct == 0:
                             continue
 
-                        ratio_stars = float(avg_stars) / d_avg_stars
-                        ratio_pct   = float(avg_pct)   / d_avg_pct
+                        ratio_stars = float(stars) / d_avg_stars
+                        ratio_pct   = float(percent) / d_avg_pct
 
                         adj_stars = min(ratio_stars * global_avg_stars, 3.0)
                         adj_pct   = min(ratio_pct   * global_avg_percent, 100.0)
@@ -940,23 +940,23 @@ class Stats(commands.Cog):
                     for r in district_avgs
                 }
 
-                # 3. Team averages per district
+                # 3. Team scores per district instance
                 rows = await conn.fetch(
                     """
                     SELECT
                         ds.team_id,
                         t.name AS team_name,
+                        ds.match_id,
                         ds.district,
-                        AVG(ds.current_stars)   AS avg_stars,
-                        AVG(ds.current_percent) AS avg_percent,
-                        COUNT(*) AS match_count
+                        ds.current_stars,
+                        ds.current_percent
                     FROM district_scores ds
                     JOIN matches m ON ds.match_id = m.id
                     JOIN teams t ON ds.team_id = t.id
                     WHERE m.status = 'completed'
                       AND ds.attack2_done = TRUE
                       AND NOT (ds.current_stars = 0 AND ds.current_percent = 0)
-                    GROUP BY ds.team_id, t.name, ds.district
+                    ORDER BY ds.team_id, ds.match_id, ds.district
                     """
                 )
 
@@ -966,28 +966,28 @@ class Stats(commands.Cog):
                     )
                     return
 
-                # 4. Group by team and normalize
+                # 4. Group by team and normalize each district instance
                 team_data = defaultdict(list)
                 for r in rows:
                     team_data[r["team_id"]].append(
-                        (r["team_name"], r["district"], r["avg_stars"], r["avg_percent"])
+                        (r["team_name"], r["match_id"], r["district"], r["current_stars"], r["current_percent"])
                     )
 
                 team_scores = []
-                for team_id, districts in team_data.items():
-                    team_name = districts[0][0]
+                for team_id, district_instances in team_data.items():
+                    team_name = district_instances[0][0]
                     adj_stars_sum = 0.0
                     adj_pct_sum   = 0.0
                     district_count = 0
-                    for _, district, avg_stars, avg_pct in districts:
+                    for _, match_id, district, stars, percent in district_instances:
                         if district not in district_avg_map:
                             continue
                         d_avg_stars, d_avg_pct = district_avg_map[district]
                         if d_avg_stars == 0 or d_avg_pct == 0:
                             continue
 
-                        ratio_stars = float(avg_stars) / d_avg_stars
-                        ratio_pct   = float(avg_pct)   / d_avg_pct
+                        ratio_stars = float(stars) / d_avg_stars
+                        ratio_pct   = float(percent) / d_avg_pct
 
                         adj_stars = min(ratio_stars * global_avg_stars, 3.0)
                         adj_pct   = min(ratio_pct   * global_avg_percent, 100.0)
