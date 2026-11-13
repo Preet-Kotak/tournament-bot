@@ -5,6 +5,7 @@ from discord import app_commands
 from bot.config import ADMIN_IDS, PARTICIPANT_ROLE_ID
 from bot.utils.embeds import (
     get_overview_embed,
+    get_tournament_management_embed,
     get_team_management_embed,
     get_match_management_embed,
     get_base_management_embed,
@@ -30,6 +31,7 @@ class HelpCategorySelect(discord.ui.Select):
         if is_admin:
             options = [
                 discord.SelectOption(label="Overview", description="See all available categories", emoji="📚", value="overview"),
+                discord.SelectOption(label="Tournament Management", description="Create and manage tournaments", emoji="🏆", value="tournament"),
                 discord.SelectOption(label="Team Management", description="Create, edit, and manage teams", emoji="👥", value="team"),
                 discord.SelectOption(label="Match Management", description="Set up and control matches", emoji="⚔️", value="match"),
                 discord.SelectOption(label="Base Management", description="Submit and view bases", emoji="🗺️", value="base"),
@@ -70,6 +72,8 @@ class HelpCategorySelect(discord.ui.Select):
         # Generate appropriate embed based on selection
         if selected == "overview":
             embed = get_overview_embed(self.is_admin, self.is_participant)
+        elif selected == "tournament":
+            embed = get_tournament_management_embed()
         elif selected == "team":
             embed = get_team_management_embed(self.is_admin)
         elif selected == "match":

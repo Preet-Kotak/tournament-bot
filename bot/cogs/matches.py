@@ -13,6 +13,11 @@ from PIL import ImageFilter
 
 import bot.db.connection as connection
 from bot.utils.checks import is_admin
+from bot.utils.tournament_checks import (
+    tournament_admin_only,
+    require_active_tournament,
+    get_active_tournament,
+)
 from bot.utils.embeds import success_embed, error_embed, upcoming_matches_embed
 from bot.utils.discord_utils import get_username
 from bot.utils.timezones import display_timezone_offset, local_time_label, timezone_offset_to_minutes
@@ -418,38 +423,52 @@ class Matches(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="set-match", description="Schedule a match between two teams (Admin only).")
+    @app_commands.command(name="set-match", description="Schedule a match between two teams (Tournament Admin only).")
     @app_commands.autocomplete(team1=team_autocomplete, team2=team_autocomplete)
-    @is_admin()
+    @tournament_admin_only()
     async def set_match(self, interaction: discord.Interaction, team1: str, team2: str):
         await interaction.response.defer(ephemeral=True)
+
+        # Get active tournament
+        tournament = await get_active_tournament()
+        if not tournament:
+            await interaction.followup.send(embed=error_embed("No Active Tournament", "There is no active tournament."))
+            return
 
         if team1.lower() == team2.lower():
             await interaction.followup.send(embed=error_embed("Invalid", "A team cannot play against itself."))
             return
 
         async with connection.pool.acquire() as conn:
-            t1 = await conn.fetchrow("SELECT * FROM teams WHERE name = $1 AND is_approved = TRUE", team1)
-            t2 = await conn.fetchrow("SELECT * FROM teams WHERE name = $1 AND is_approved = TRUE", team2)
+            # Fetch teams from active tournament only
+            t1 = await conn.fetchrow(
+                "SELECT * FROM teams WHERE name = $1 AND is_approved = TRUE AND tournament_id = $2",
+                team1, tournament['id']
+            )
+            t2 = await conn.fetchrow(
+                "SELECT * FROM teams WHERE name = $1 AND is_approved = TRUE AND tournament_id = $2",
+                team2, tournament['id']
+            )
 
             if not t1:
-                await interaction.followup.send(embed=error_embed("Not Found", f"Approved team '{team1}' not found."))
+                await interaction.followup.send(embed=error_embed("Not Found", f"Approved team '{team1}' not found in this tournament."))
                 return
             if not t2:
-                await interaction.followup.send(embed=error_embed("Not Found", f"Approved team '{team2}' not found."))
+                await interaction.followup.send(embed=error_embed("Not Found", f"Approved team '{team2}' not found in this tournament."))
                 return
 
+            # Check existing matches between these teams in this tournament
             existing_count = await conn.fetchval(
                 """SELECT COUNT(*) FROM matches
-                WHERE (team1_id = $1 AND team2_id = $2) OR (team1_id = $2 AND team2_id = $1)""",
-                t1['id'], t2['id']
+                WHERE tournament_id = $3 AND ((team1_id = $1 AND team2_id = $2) OR (team1_id = $2 AND team2_id = $1))""",
+                t1['id'], t2['id'], tournament['id']
             )
             match_number = existing_count + 1
 
             match_id = await conn.fetchval(
-                """INSERT INTO matches (team1_id, team2_id, status, match_number)
-                VALUES ($1, $2, 'pending', $3) RETURNING id""",
-                t1['id'], t2['id'], match_number
+                """INSERT INTO matches (team1_id, team2_id, status, match_number, tournament_id)
+                VALUES ($1, $2, 'pending', $3, $4) RETURNING id""",
+                t1['id'], t2['id'], match_number, tournament['id']
             )
 
             guild = interaction.guild
@@ -507,9 +526,9 @@ class Matches(commands.Cog):
                 msg += f"\nChannel: {channel.mention}"
             await interaction.followup.send(embed=success_embed("Match Scheduled", msg))
 
-    @app_commands.command(name="schedule-match", description="Set the time and mark a match as scheduled (Admin only).")
+    @app_commands.command(name="schedule-match", description="Set the time and mark a match as scheduled (Tournament Admin only).")
     @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete)
-    @is_admin()
+    @tournament_admin_only()
     async def schedule_match(self, interaction: discord.Interaction, match_id: int, unix_timestamp: int):
         await interaction.response.defer(ephemeral=True)
 
@@ -535,9 +554,9 @@ class Matches(commands.Cog):
             )
         )
 
-    @app_commands.command(name="start-match", description="Start a match and post the live embed (Admin only).")
+    @app_commands.command(name="start-match", description="Start a match and post the live embed (Tournament Admin only).")
     @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete)
-    @is_admin()
+    @tournament_admin_only()
     async def start_match(self, interaction: discord.Interaction, match_id: int):
         await interaction.response.defer(ephemeral=True)
 
@@ -590,9 +609,16 @@ class Matches(commands.Cog):
 
         await interaction.followup.send(embed=success_embed("Match Started", f"Match #{match_id} is now active. Live embed posted in {embed_channel.mention}."))
 
-    @app_commands.command(name="matches", description="View all matches.")
+    @app_commands.command(name="matches", description="View all matches in the active tournament.")
+    @require_active_tournament()
     async def matches(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
+        
+        # Get active tournament
+        tournament = await get_active_tournament()
+        if not tournament:
+            await interaction.followup.send(embed=error_embed("No Active Tournament", "There is no active tournament."))
+            return
 
         async with connection.pool.acquire() as conn:
             rows = await conn.fetch(
@@ -602,9 +628,10 @@ class Matches(commands.Cog):
                 FROM matches m
                 JOIN teams t1 ON m.team1_id = t1.id
                 JOIN teams t2 ON m.team2_id = t2.id
-                WHERE m.status IN ('pending', 'scheduled')
+                WHERE m.status IN ('pending', 'scheduled') AND m.tournament_id = $1
                 ORDER BY m.id ASC
-                """
+                """,
+                tournament['id']
             )
 
         if not rows:
@@ -704,13 +731,13 @@ class Matches(commands.Cog):
 
         await interaction.followup.send(file=file)
 
-    @app_commands.command(name="end-match", description="End a match, post the final result image, and move it to archive (Admin only).")
+    @app_commands.command(name="end-match", description="End a match, post the final result image, and move it to archive (Tournament Admin only).")
     @app_commands.autocomplete(match_id=active_match_autocomplete)
     @app_commands.describe(
         subtitle="Optional result subtitle, like Lower Bracket Final",
         note="Optional note shown at the bottom of the result image",
     )
-    @is_admin()
+    @tournament_admin_only()
     async def end_match(self, interaction: discord.Interaction, match_id: int, subtitle: Optional[str] = None, note: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
 
@@ -815,9 +842,9 @@ class Matches(commands.Cog):
             embed=success_embed("Match Ended", f"Match #{match_id} ({t1_name} vs {t2_name}) has been marked as completed and archived.\n{status_line}")
         )
 
-    @app_commands.command(name="delete-match", description="Delete a match completely (Admin only).")
+    @app_commands.command(name="delete-match", description="Delete a match completely (Tournament Admin only).")
     @app_commands.autocomplete(match_id=pending_or_scheduled_match_autocomplete)
-    @is_admin()
+    @tournament_admin_only()
     async def delete_match(self, interaction: discord.Interaction, match_id: int):
         await interaction.response.defer(ephemeral=True)
 

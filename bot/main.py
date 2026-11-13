@@ -14,6 +14,14 @@ from bot.config import DISCORD_TOKEN, PORT, RENDER_URL, KEEPALIVE_INTERVAL
 from bot.db.connection import init_db, close_db
 from bot.db.models import setup_schema
 from bot.utils.checks import NotAdmin, NotTeamLeader, NotTeamMember
+from bot.utils.tournament_checks import (
+    NotSuperAdmin,
+    NotTournamentAdmin,
+    NoActiveTournament,
+    TournamentNotInRegistration,
+    TournamentNotFound,
+    get_active_tournament,
+)
 from bot.utils.embeds import error_embed
 
 logging.basicConfig(level=logging.INFO)
@@ -59,11 +67,36 @@ class TournamentManagerBot(commands.Bot):
     async def on_ready(self):
         log.info(f"Logged in as {self.user} (ID: {self.user.id})")
         log.info("------")
+        
+        # Update bot presence with active tournament
+        try:
+            tournament = await get_active_tournament()
+            if tournament:
+                activity = discord.Activity(
+                    type=discord.ActivityType.watching,
+                    name=f"{tournament['name']} ({tournament['status'].title()})"
+                )
+            else:
+                activity = discord.Activity(
+                    type=discord.ActivityType.watching,
+                    name="No active tournament"
+                )
+            await self.change_presence(activity=activity)
+        except Exception as e:
+            log.warning(f"Failed to update bot presence: {e}")
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: Exception):
         """Central handler for slash command errors, including permission check failures."""
         if isinstance(error, (NotAdmin, NotTeamLeader, NotTeamMember)):
             embed = error_embed("Permission Denied", str(error))
+        elif isinstance(error, (NotSuperAdmin, NotTournamentAdmin)):
+            embed = error_embed("Permission Denied", str(error))
+        elif isinstance(error, NoActiveTournament):
+            embed = error_embed("No Active Tournament", str(error))
+        elif isinstance(error, TournamentNotInRegistration):
+            embed = error_embed("Tournament Not Open", str(error))
+        elif isinstance(error, TournamentNotFound):
+            embed = error_embed("Tournament Not Found", str(error))
         elif isinstance(error, app_commands.CommandNotFound):
             return  # ignore silently
         else:

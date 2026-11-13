@@ -11,13 +11,61 @@ async def setup_schema():
 
     queries = [
         """
-        CREATE TABLE IF NOT EXISTS teams (
+        CREATE TABLE IF NOT EXISTS tournaments (
             id SERIAL PRIMARY KEY,
             name TEXT UNIQUE NOT NULL,
+            initials TEXT UNIQUE NOT NULL,
+            status TEXT CHECK (status IN ('setup', 'registration', 'active', 'completed')) DEFAULT 'setup',
+            enabled_districts INTEGER[] DEFAULT ARRAY[0,1,2,3,4,5,6,7,8],
+            has_qualifiers BOOLEAN DEFAULT TRUE,
+            qualifier_districts TEXT[] DEFAULT ARRAY['Barbarian Camp', 'Wizard Valley', 'Balloon Lagoon', 'Builder''s Workshop', 'Dragon Cliffs', 'Golem Quarry'],
+            participant_role_id BIGINT,
+            admin_role_id BIGINT,
+            team_channel_category_id BIGINT,
+            created_by BIGINT NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
+            started_at TIMESTAMP,
+            ended_at TIMESTAMP,
+            description TEXT,
+            logo_url TEXT,
+            host_accounts TEXT
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS super_admins (
+            user_id BIGINT PRIMARY KEY,
+            added_at TIMESTAMP DEFAULT NOW(),
+            added_by BIGINT
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS tournament_admins (
+            id SERIAL PRIMARY KEY,
+            tournament_id INTEGER REFERENCES tournaments(id) ON DELETE CASCADE,
+            user_id BIGINT NOT NULL,
+            assigned_at TIMESTAMP DEFAULT NOW(),
+            assigned_by BIGINT,
+            UNIQUE(tournament_id, user_id)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS tournament_settings (
+            id SERIAL PRIMARY KEY,
+            tournament_id INTEGER REFERENCES tournaments(id) ON DELETE CASCADE,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            UNIQUE(tournament_id, key)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS teams (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
             logo_url TEXT,
             is_approved BOOLEAN DEFAULT FALSE,
             team_role_id BIGINT,
             channel_id BIGINT,
+            tournament_id INTEGER REFERENCES tournaments(id) ON DELETE CASCADE,
             created_at TIMESTAMP DEFAULT NOW()
         );
         """,
@@ -39,7 +87,8 @@ async def setup_schema():
             status TEXT CHECK (status IN ('pending', 'scheduled', 'active', 'completed')) DEFAULT 'pending',
             scheduled_time TIMESTAMP,
             embed_message_id BIGINT,
-            match_number INTEGER DEFAULT 1
+            match_number INTEGER DEFAULT 1,
+            tournament_id INTEGER REFERENCES tournaments(id) ON DELETE CASCADE
         );
         """,
         """
@@ -106,7 +155,7 @@ async def setup_schema():
             percent INTEGER NOT NULL CHECK (percent BETWEEN 0 AND 100),
             submitted_by BIGINT NOT NULL,
             submitted_at TIMESTAMP DEFAULT NOW(),
-            UNIQUE(team_id, district)
+            tournament_id INTEGER REFERENCES tournaments(id) ON DELETE CASCADE
         );
         """,
         """
@@ -137,11 +186,64 @@ async def setup_schema():
             "UPDATE team_members SET timezone_offset = '+00:00' WHERE timezone_offset IS NULL",
             "ALTER TABLE team_members ALTER COLUMN timezone_offset SET DEFAULT '+00:00'",
             "ALTER TABLE team_members ALTER COLUMN timezone_offset SET NOT NULL",
+            # Multi-tournament migrations
+            "ALTER TABLE teams ADD COLUMN IF NOT EXISTS tournament_id INTEGER REFERENCES tournaments(id) ON DELETE CASCADE",
+            "ALTER TABLE matches ADD COLUMN IF NOT EXISTS tournament_id INTEGER REFERENCES tournaments(id) ON DELETE CASCADE",
+            "ALTER TABLE qualifier_scores ADD COLUMN IF NOT EXISTS tournament_id INTEGER REFERENCES tournaments(id) ON DELETE CASCADE",
+            # Create indexes for performance
+            "CREATE INDEX IF NOT EXISTS idx_teams_tournament ON teams(tournament_id)",
+            "CREATE INDEX IF NOT EXISTS idx_matches_tournament ON matches(tournament_id)",
+            "CREATE INDEX IF NOT EXISTS idx_qualifier_tournament ON qualifier_scores(tournament_id)",
+            "CREATE INDEX IF NOT EXISTS idx_tournaments_status ON tournaments(status)",
+            "CREATE INDEX IF NOT EXISTS idx_tournament_admins_user ON tournament_admins(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_tournament_admins_tournament ON tournament_admins(tournament_id)",
         ]
         for m in migrations:
             try:
                 await conn.execute(m)
             except Exception as e:
                 log.error(f"Error running migration: {e}")
+
+        # Create views for cross-tournament statistics
+        views = [
+            """
+            CREATE OR REPLACE VIEW player_overall_stats AS
+            SELECT 
+                a.attacker_id,
+                COUNT(DISTINCT m.tournament_id) as tournaments_played,
+                COUNT(DISTINCT m.id) as matches_played,
+                COUNT(a.id) as total_attacks,
+                AVG(a.stars_after) as avg_stars,
+                AVG(a.percent_after) as avg_percent,
+                SUM(CASE WHEN a.stars_after = 3 THEN 1 ELSE 0 END) as three_stars,
+                SUM(CASE WHEN a.stars_after = 1 THEN 1 ELSE 0 END) as one_stars
+            FROM attacks a
+            JOIN matches m ON a.match_id = m.id
+            JOIN tournaments t ON m.tournament_id = t.id
+            WHERE t.status IN ('active', 'completed')
+            GROUP BY a.attacker_id;
+            """,
+            """
+            CREATE OR REPLACE VIEW team_tournament_summary AS
+            SELECT 
+                t.id as team_id,
+                t.name as team_name,
+                t.tournament_id,
+                tn.name as tournament_name,
+                tn.initials as tournament_initials,
+                COUNT(DISTINCT m.id) as matches_played,
+                SUM(CASE WHEN m.status = 'completed' THEN 1 ELSE 0 END) as matches_completed
+            FROM teams t
+            JOIN tournaments tn ON t.tournament_id = tn.id
+            LEFT JOIN matches m ON (m.team1_id = t.id OR m.team2_id = t.id)
+            GROUP BY t.id, t.name, t.tournament_id, tn.name, tn.initials;
+            """
+        ]
+        
+        for v in views:
+            try:
+                await conn.execute(v)
+            except Exception as e:
+                log.error(f"Error creating view: {e}")
 
     log.info("Database schema setup complete.")

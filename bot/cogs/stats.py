@@ -9,6 +9,11 @@ import bot.db.connection as connection
 from bot.utils.embeds import success_embed, error_embed, FOOTER
 from bot.utils.discord_utils import fetch_player_link
 from bot.utils.constants import DISTRICT_NAMES, resolve_district
+from bot.utils.tournament_checks import (
+    get_active_tournament,
+    get_all_tournaments,
+    require_active_tournament,
+)
 from bot.utils.autocomplete import (
     district_autocomplete,
     team_autocomplete,
@@ -27,6 +32,17 @@ def _rank(position: int) -> str:
 
 def _resolve_district(district: str) -> Optional[int]:
     return resolve_district(district)
+
+
+async def tournament_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice]:
+    """Autocomplete for tournament selection in stats commands."""
+    tournaments = await get_all_tournaments()
+    choices = []
+    for t in tournaments:
+        label = f"{t['name']} ({t['initials']}) - {t['status'].title()}"
+        if current.lower() in label.lower():
+            choices.append(app_commands.Choice(name=label[:100], value=str(t['id'])))
+    return choices[:25]
 
 
 def _paginate(items: list[str], per_page: int = 10) -> list[str]:
@@ -1034,6 +1050,97 @@ class Stats(commands.Cog):
                 embed=error_embed("Database Error", "An error occurred while fetching the leaderboard."),
                 ephemeral=True,
             )
+
+    # ── /player-overall-stats ────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="player-overall-stats",
+        description="View a player's statistics across ALL tournaments"
+    )
+    async def player_overall_stats(
+        self,
+        interaction: discord.Interaction,
+        player: discord.Member
+    ):
+        """Display a player's cumulative statistics across all tournaments."""
+        await interaction.response.defer(ephemeral=False)
+
+        async with connection.pool.acquire() as conn:
+            # Get overall stats from the view
+            overall = await conn.fetchrow(
+                "SELECT * FROM player_overall_stats WHERE attacker_id = $1",
+                player.id
+            )
+
+            if not overall or overall['total_attacks'] == 0:
+                await interaction.followup.send(
+                    embed=error_embed(
+                        "No Data",
+                        f"{player.mention} has not participated in any completed or active tournaments."
+                    )
+                )
+                return
+
+            # Get per-tournament breakdown
+            tournament_stats = await conn.fetch(
+                """
+                SELECT 
+                    t.name as tournament_name,
+                    t.initials as tournament_initials,
+                    COUNT(DISTINCT m.id) as matches_played,
+                    COUNT(a.id) as attacks,
+                    AVG(a.stars_after) as avg_stars,
+                    AVG(a.percent_after) as avg_percent,
+                    SUM(CASE WHEN a.stars_after = 3 THEN 1 ELSE 0 END) as three_stars,
+                    SUM(CASE WHEN a.stars_after = 1 THEN 1 ELSE 0 END) as one_stars
+                FROM attacks a
+                JOIN matches m ON a.match_id = m.id
+                JOIN tournaments t ON m.tournament_id = t.id
+                WHERE a.attacker_id = $1
+                GROUP BY t.id, t.name, t.initials
+                ORDER BY t.created_at DESC
+                """,
+                player.id
+            )
+
+        # Build embed
+        embed = discord.Embed(
+            title=f"📊 Overall Statistics — {player.display_name}",
+            color=discord.Color.blue()
+        )
+
+        # Overall stats section
+        overall_section = (
+            f"**Tournaments:** {overall['tournaments_played']}\n"
+            f"**Matches:** {overall['matches_played']}\n"
+            f"**Total Attacks:** {overall['total_attacks']}\n"
+            f"**Average:** {overall['avg_stars']:.2f}⭐ {overall['avg_percent']:.1f}%\n"
+            f"**3-Stars:** {overall['three_stars']} | **1-Stars:** {overall['one_stars']}"
+        )
+        embed.add_field(name="🏆 Career Summary", value=overall_section, inline=False)
+
+        # Per-tournament breakdown
+        if tournament_stats:
+            tournament_lines = []
+            for ts in tournament_stats[:5]:  # Show max 5 tournaments
+                tournament_lines.append(
+                    f"**{ts['tournament_initials']}** — "
+                    f"{ts['attacks']} attacks, "
+                    f"{ts['avg_stars']:.2f}⭐ {ts['avg_percent']:.1f}%, "
+                    f"3★: {ts['three_stars']}"
+                )
+            
+            if len(tournament_stats) > 5:
+                tournament_lines.append(f"... and {len(tournament_stats) - 5} more tournaments")
+            
+            embed.add_field(
+                name="📋 Tournament Breakdown",
+                value="\n".join(tournament_lines),
+                inline=False
+            )
+
+        embed.set_footer(text="Overall stats across all completed and active tournaments")
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):

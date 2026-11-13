@@ -211,6 +211,33 @@ def upcoming_matches_embed(rows: list) -> discord.Embed:
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
+def get_tournament_management_embed() -> discord.Embed:
+    """Tournament management commands for super admins."""
+    embed = discord.Embed(
+        title="🏆 Tournament Management Commands (Super Admin)",
+        color=discord.Color.gold(),
+        description=(
+            "**Create & Configure:**\n"
+            "`/tournament-create` - Create a new tournament with roles and channels\n"
+            "`/tournament-configure` - Set up districts and qualifier settings\n"
+            "`/tournament-set-status` - Change tournament status (setup/registration/active/completed)\n\n"
+            "**Admin Management:**\n"
+            "`/tournament-add-admin` - Assign a user as tournament admin\n"
+            "`/tournament-remove-admin` - Remove a tournament admin\n\n"
+            "**View & Info:**\n"
+            "`/tournament-list` - View all tournaments (public)\n"
+            "`/tournament-info` - View details about a tournament (public)\n"
+            "`/tournament-current` - Show the active tournament (public)\n"
+            "`/tournament-admins` - View admins for a tournament (public)\n\n"
+            "**Danger Zone:**\n"
+            "`/tournament-delete` - Permanently delete a tournament (requires confirmation)\n\n"
+            "**Note:** Only super admins can create and manage tournaments. Tournament admins handle match operations."
+        )
+    )
+    embed.set_footer(text=FOOTER)
+    return embed
+
+
 def get_overview_embed(is_admin: bool, is_participant: bool) -> discord.Embed:
     """Overview embed shown when /help is first called."""
     role_name = "Admin" if is_admin else "Participant" if is_participant else "Public"

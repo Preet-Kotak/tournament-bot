@@ -8,6 +8,13 @@ from typing import Optional
 import aiohttp
 import bot.db.connection as connection
 from bot.utils.checks import is_admin, is_team_leader_or_admin
+from bot.utils.tournament_checks import (
+    tournament_admin_only,
+    tournament_in_registration,
+    require_active_tournament,
+    get_active_tournament,
+    get_tournament_by_id,
+)
 from bot.utils.timezones import display_timezone_offset, normalize_timezone_offset
 from bot.utils.discord_utils import fetch_player_link, player_link
 from bot.utils.text_formatting import to_sans_serif_bold
@@ -69,6 +76,7 @@ class Teams(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="create-team", description="Register a new team for the tournament.")
+    @tournament_in_registration()
     async def create_team(
         self,
         interaction: discord.Interaction,
@@ -81,30 +89,53 @@ class Teams(commands.Cog):
     ):
         await interaction.response.defer(ephemeral=True)
         
+        # Get active tournament
+        tournament = await get_active_tournament()
+        if not tournament:
+            await interaction.followup.send(embed=error_embed("No Active Tournament", "There is no active tournament."))
+            return
+        
         members = [m for m in [member1, member2, member3, member4, member5] if m is not None]
         
         # Check uniqueness of members
         if len(set(m.id for m in members)) != len(members):
             await interaction.followup.send(embed=error_embed("Duplicate Members", "You provided the same member multiple times."))
             return
+        
+        # Validate member count matches tournament's enabled districts
+        enabled_districts = tournament['enabled_districts'] or [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        max_members = len(enabled_districts)
+        if len(members) > max_members:
+            await interaction.followup.send(
+                embed=error_embed(
+                    "Too Many Members",
+                    f"This tournament only has {max_members} enabled districts. Maximum {max_members} members allowed."
+                )
+            )
+            return
 
         async with connection.pool.acquire() as conn:
-            # Check if name exists
-            existing_team = await conn.fetchrow("SELECT id FROM teams WHERE name = $1", name)
+            # Check if name exists in THIS tournament
+            existing_team = await conn.fetchrow(
+                "SELECT id FROM teams WHERE name = $1 AND tournament_id = $2",
+                name, tournament['id']
+            )
             if existing_team:
-                await interaction.followup.send(embed=error_embed("Team Exists", f"The team name '{name}' is already taken."))
+                await interaction.followup.send(embed=error_embed("Team Exists", f"The team name '{name}' is already taken in this tournament."))
                 return
 
-            # Check if any member is already in an approved team
+            # Check if any member is already in an approved team IN THIS TOURNAMENT
             member_ids = [m.id for m in members]
             in_team_records = await conn.fetch(
                 """
                 SELECT tm.user_id, t.name 
                 FROM team_members tm
                 JOIN teams t ON tm.team_id = t.id
-                WHERE tm.user_id = ANY($1::bigint[]) AND t.is_approved = TRUE
+                WHERE tm.user_id = ANY($1::bigint[]) 
+                  AND t.is_approved = TRUE
+                  AND t.tournament_id = $2
                 """,
-                member_ids
+                member_ids, tournament['id']
             )
             if in_team_records:
                 taken_users = ", ".join([
@@ -115,12 +146,13 @@ class Teams(commands.Cog):
                 return
                 
             try:
-                # Create Discord Role
+                # Create Discord Role with tournament initials prefix
                 guild = interaction.guild
-                team_role = await guild.create_role(name=name, reason=f"Team creation for {name}")
+                role_name = f"{tournament['initials']}-{name}"
+                team_role = await guild.create_role(name=role_name, reason=f"Team creation for {name} in {tournament['name']}")
                 
-                # Assign Participant and Team Roles
-                participant_role = guild.get_role(PARTICIPANT_ROLE_ID)
+                # Assign Tournament Participant Role and Team Role
+                participant_role = guild.get_role(tournament['participant_role_id']) if tournament['participant_role_id'] else None
                 for member in members:
                     roles_to_add = [team_role]
                     if participant_role and participant_role not in member.roles:
@@ -133,8 +165,8 @@ class Teams(commands.Cog):
                 # DB Insertion
                 async with conn.transaction():
                     team_id = await conn.fetchval(
-                        "INSERT INTO teams (name, team_role_id) VALUES ($1, $2) RETURNING id",
-                        name, team_role.id
+                        "INSERT INTO teams (name, team_role_id, tournament_id) VALUES ($1, $2, $3) RETURNING id",
+                        name, team_role.id, tournament['id']
                     )
                     
                     # Insert members
@@ -156,11 +188,17 @@ class Teams(commands.Cog):
                         member_tags = ", ".join([player_link(m.id, m.display_name) for m in members])
                         embed = admin_log_embed(
                             "New Team Registered",
+                            f"**Tournament:** {tournament['name']} (`{tournament['initials']}`)\n"
                             f"**Team Name:** {name}\n**Leader:** {player_link(member1.id, member1.display_name)}\n**Total Members:** {len(members)}\n**Members:** {member_tags}"
                         )
                         await log_channel.send(embed=embed, view=ApproveTeamView(self, name))
 
-                await interaction.followup.send(embed=success_embed("Team Created", f"Team '{name}' has been created successfully. Wait for an admin to approve it."))
+                await interaction.followup.send(
+                    embed=success_embed(
+                        "Team Created",
+                        f"Team '{name}' has been created successfully for **{tournament['name']}**.\n\nWait for a tournament admin to approve it."
+                    )
+                )
                 
             except Exception as e:
                 log.error(f"Error creating team: {e}")
@@ -289,17 +327,25 @@ class Teams(commands.Cog):
         if announce_message_id:
             await self._update_announce_message(interaction, team_name, announce_message_id)
 
-    @app_commands.command(name="approve-team", description="Approve a team and create their private channel (Admin only).")
+    @app_commands.command(name="approve-team", description="Approve a team and create their private channel (Tournament Admin only).")
     @app_commands.autocomplete(team_name=team_autocomplete)
-    @is_admin()
+    @tournament_admin_only()
     async def approve_team(self, interaction: discord.Interaction, team_name: str):
         await interaction.response.defer(ephemeral=True)
         await self.process_team_approval(interaction, team_name)
 
     async def process_team_approval(self, interaction: discord.Interaction, team_name: str):
+        # Get active tournament
+        tournament = await get_active_tournament()
+        if not tournament:
+            await interaction.followup.send(embed=error_embed("No Active Tournament", "There is no active tournament."))
+            return
         
         async with connection.pool.acquire() as conn:
-            team = await conn.fetchrow("SELECT * FROM teams WHERE name = $1", team_name)
+            team = await conn.fetchrow(
+                "SELECT * FROM teams WHERE name = $1 AND tournament_id = $2",
+                team_name, tournament['id']
+            )
             
             if not team:
                 await interaction.followup.send(embed=error_embed("Not Found", f"Team '{team_name}' does not exist."))
@@ -312,8 +358,12 @@ class Teams(commands.Cog):
             guild = interaction.guild
             
             try:
-                # Create private channel
-                category = guild.get_channel(TEAM_CHANNEL_CATEGORY_ID)
+                # Create private channel in tournament's category
+                category = guild.get_channel(tournament['team_channel_category_id']) if tournament['team_channel_category_id'] else None
+                if not category:
+                    # Fallback to old config if tournament doesn't have category set
+                    category = guild.get_channel(TEAM_CHANNEL_CATEGORY_ID)
+                
                 team_role = guild.get_role(team['team_role_id'])
                 
                 overwrites = {

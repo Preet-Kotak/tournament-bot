@@ -6,6 +6,11 @@ from typing import Optional
 
 import bot.db.connection as connection
 from bot.utils.checks import is_admin
+from bot.utils.tournament_checks import (
+    tournament_admin_only,
+    require_active_tournament,
+    get_active_tournament,
+)
 from bot.utils.embeds import success_embed, error_embed, FOOTER
 from bot.utils.constants import QUALIFIER_DISTRICTS
 from bot.utils.discord_utils import fetch_player_link
@@ -114,14 +119,18 @@ async def qualifier_district_autocomplete(interaction: discord.Interaction, curr
 # ── Modal ─────────────────────────────────────────────────────────────────────
 
 class QualifierSubmitModal(discord.ui.Modal, title="Qualifier Score Submission"):
-    def __init__(self, cog: "Qualifier", team_name: str, team_id: int, existing: dict):
+    def __init__(self, cog: "Qualifier", team_name: str, team_id: int, existing: dict, tournament: dict):
         super().__init__()
         self.cog = cog
         self.team_name = team_name
         self.team_id = team_id
+        self.tournament = tournament
 
+        # Use tournament's configured qualifier districts
+        qualifier_districts = tournament.get('qualifier_districts') or QUALIFIER_DISTRICTS
+        
         default_lines = []
-        for district in QUALIFIER_DISTRICTS:
+        for district in qualifier_districts:
             existing_row = existing.get(district)
             default_value = (
                 f"{existing_row['stars']}.{existing_row['percent']:03d}"
@@ -210,12 +219,12 @@ class QualifierSubmitModal(discord.ui.Modal, title="Qualifier Score Submission")
                 for district, (stars, percent) in parsed.items():
                     await conn.execute(
                         """
-                        INSERT INTO qualifier_scores (team_id, district, stars, percent, submitted_by)
-                        VALUES ($1, $2, $3, $4, $5)
-                        ON CONFLICT (team_id, district)
+                        INSERT INTO qualifier_scores (team_id, district, stars, percent, submitted_by, tournament_id)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        ON CONFLICT (team_id, district, tournament_id)
                         DO UPDATE SET stars = $3, percent = $4, submitted_by = $5, submitted_at = NOW()
                         """,
-                        self.team_id, district, stars, percent, interaction.user.id,
+                        self.team_id, district, stars, percent, interaction.user.id, self.tournament['id'],
                     )
 
         lines = [
@@ -243,37 +252,70 @@ class Qualifier(commands.Cog):
 
     # ── /qualifier-submit ─────────────────────────────────────────────────────
 
-    @app_commands.command(name="qualifier-submit", description="Submit qualifier scores for a team (Admin only).")
+    @app_commands.command(name="qualifier-submit", description="Submit qualifier scores for a team (Tournament Admin only).")
     @app_commands.autocomplete(team=qualifier_team_autocomplete)
     @app_commands.describe(team="The team to submit scores for")
-    @is_admin()
+    @tournament_admin_only()
     async def qualifier_submit(self, interaction: discord.Interaction, team: str):
+        # Get active tournament
+        tournament = await get_active_tournament()
+        if not tournament:
+            await interaction.response.send_message(
+                embed=error_embed("No Active Tournament", "There is no active tournament."),
+                ephemeral=True
+            )
+            return
+        
+        # Check if tournament has qualifiers enabled
+        if not tournament['has_qualifiers']:
+            await interaction.response.send_message(
+                embed=error_embed("No Qualifiers", f"**{tournament['name']}** does not have qualifiers enabled."),
+                ephemeral=True
+            )
+            return
+        
         async with connection.pool.acquire() as conn:
             team_row = await conn.fetchrow(
-                "SELECT id FROM teams WHERE name = $1 AND is_approved = TRUE", team
+                "SELECT id FROM teams WHERE name = $1 AND is_approved = TRUE AND tournament_id = $2",
+                team, tournament['id']
             )
             if not team_row:
                 await interaction.response.send_message(
-                    embed=error_embed("Not Found", f"Approved team **{team}** not found."),
+                    embed=error_embed("Not Found", f"Approved team **{team}** not found in this tournament."),
                     ephemeral=True,
                 )
                 return
 
             existing_rows = await conn.fetch(
-                "SELECT district, stars, percent FROM qualifier_scores WHERE team_id = $1",
-                team_row["id"],
+                "SELECT district, stars, percent FROM qualifier_scores WHERE team_id = $1 AND tournament_id = $2",
+                team_row["id"], tournament['id']
             )
 
         existing = {r["district"]: r for r in existing_rows}
-        modal = QualifierSubmitModal(self, team, team_row["id"], existing)
+        modal = QualifierSubmitModal(self, team, team_row["id"], existing, tournament)
         await interaction.response.send_modal(modal)
 
     # ── /qualifier-lb ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="qualifier-lb", description="Show the qualifier leaderboard.")
-    @qualifier_access_check()
+    @app_commands.command(name="qualifier-lb", description="Show the qualifier leaderboard for the active tournament.")
+    @require_active_tournament()
     async def qualifier_lb(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
+        
+        # Get active tournament
+        tournament = await get_active_tournament()
+        if not tournament:
+            await interaction.followup.send(
+                embed=error_embed("No Active Tournament", "There is no active tournament.")
+            )
+            return
+        
+        # Check if tournament has qualifiers
+        if not tournament['has_qualifiers']:
+            await interaction.followup.send(
+                embed=error_embed("No Qualifiers", f"**{tournament['name']}** does not have qualifiers enabled.")
+            )
+            return
 
         async with connection.pool.acquire() as conn:
             rows = await conn.fetch(
@@ -284,14 +326,16 @@ class Qualifier(commands.Cog):
                        COUNT(qs.district) AS districts_done
                 FROM qualifier_scores qs
                 JOIN teams t ON qs.team_id = t.id
+                WHERE qs.tournament_id = $1
                 GROUP BY t.id, t.name
                 ORDER BY total_stars DESC, total_percent DESC
-                """
+                """,
+                tournament['id']
             )
 
         if not rows:
             await interaction.followup.send(
-                embed=error_embed("No Data", "No qualifier scores have been submitted yet.")
+                embed=error_embed("No Data", "No qualifier scores have been submitted yet for this tournament.")
             )
             return
 
@@ -302,7 +346,7 @@ class Qualifier(commands.Cog):
                 f"{row['total_stars']}⭐ {row['total_percent']}%"
             )
 
-        embed = success_embed("🏆 Qualifier Leaderboard", "\n".join(lines))
+        embed = success_embed(f"🏆 Qualifier Leaderboard — {tournament['name']}", "\n".join(lines))
         await interaction.followup.send(embed=embed)
 
     # ── /qualifier-team-info ──────────────────────────────────────────────────

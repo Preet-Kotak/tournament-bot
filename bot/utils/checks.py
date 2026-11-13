@@ -1,3 +1,16 @@
+"""
+Legacy permission checks for backward compatibility.
+
+NOTE: This module is being phased out in favor of tournament_checks.py
+which provides tournament-aware permission checking.
+
+For new code, use:
+- tournament_checks.super_admin_only() instead of is_admin()
+- tournament_checks.tournament_admin_only() for tournament-specific admin operations
+
+These legacy checks still work with the old ADMIN_IDS from config.py
+"""
+
 import discord
 from discord import app_commands
 from bot.config import ADMIN_IDS
